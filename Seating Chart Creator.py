@@ -20,7 +20,6 @@ def removeDoubleSpaces(name):
     return name
 ## read data from Punchbowl_Event_Guest_List.1
 def readGuestList():
-    print('reading guest list...')
     antiRequests = {} ## dictionary, key is guestName, value is who they can't sit with
     guests = {} ## dictionary, key is guestName and value is set of baggages
     emails = {}
@@ -29,9 +28,11 @@ def readGuestList():
     
     for row_idx in range(1, xl_sheet.nrows):    # Iterate through rows, don't include header        
         if xl_sheet.cell(row_idx, 4).value == 'Yes':
+
             guestName = removeDoubleSpaces(xl_sheet.cell(row_idx, 0).value.strip())
             email = xl_sheet.cell(row_idx, 1).value.strip()
-            
+            if "@" not in email and "." not in email and email != '':
+                print(f"{guestName}--Invalid email address: {email}")
 #           if guestName.count('-') > 1:
 #                familyName = '-'.join(guestName.split('-')[:-1]).strip()
 #                individualName = guestName.split('-')[-1].strip()
@@ -40,8 +41,8 @@ def readGuestList():
                 print('ERROR: guest {} is duplicated!'.format(guestName))
 
             guests[guestName] = set()
-            emails[guestName] = email
-            
+            emails[formatNameWithoutFamilyName(guestName)] = email
+            print (1111, guestName, email)
     
     ## read data from Requests
     xl_sheet = wb.sheet_by_name('Requests')    
@@ -92,6 +93,13 @@ def readGuestList():
                     print('ANTI-REQUEST IGNORED: "{}" is not attending this event, so the anti-request with "{}" will be ignored.'.format(guestName, antiRequest))
             else:
                 print('ANTI-REQUEST IGNORED: "{}" is not attending this event, so the anti-request with "{}" will be ignored.'.format(antiRequest, guestName))
+
+    print("Printing EMAILS", len(emails))
+  
+#    for guestName, email in emails.items(): 
+#        print(f"2222 -- {guestName}, {email}")
+
+
     with open('guest_data.p', 'wb') as f:
         pickle.dump((guests, antiRequests, emails), f)    
     return guests, antiRequests, emails
@@ -184,7 +192,10 @@ def generateSeatingChart(guests, antiRequests):
 ## DONE: notify about 2 hyphens
 ## DONE: notify about duplicate guests
         
-
+def formatNameWithoutFamilyName(guest):
+    if '-' in guest:
+        guest = guest.split('-')[-1].strip()
+    return guest    
 
 def writeSeatingChart(tables, timestamp):
     ## write seating chart into output file
@@ -204,10 +215,8 @@ def writeSeatingChart(tables, timestamp):
         for guest in sorted(table):
             row_idx += 1
             sheet.write(row_idx, 0, tableNum)
-            if '-' in guest:
-                sheet.write(row_idx, 1, guest.split('-')[-1].strip())
-            else:
-                sheet.write(row_idx, 1, guest)
+            sheet.write(row_idx, 1, formatNameWithoutFamilyName(guest))
+            
             sheet.write(row_idx, 2, len(table))
         tableNum += 1
     
@@ -263,7 +272,7 @@ def writeTables(tables, emails, timestamp, writeEmails):
 
 
             try:
-                if writeEmails: sheet.write(row_idx, 1, emails[guest])
+                if writeEmails: sheet.write(row_idx, 1,  emails[formatNameWithoutFamilyName(guest)])
             except:
                 if writeEmails: sheet.write(row_idx, 1, '')
             
@@ -315,11 +324,16 @@ def editTableNumbers(tables):
     ## ask what number it should be.  show all numbers that are left.  enter will not change it.
     
 if __name__ == "__main__":    
+    print("reading guest list...")
     guests, antiRequests, emails = readGuestList()
+    print("generating seating chart...")
     tables = generateSeatingChart(guests, antiRequests)
+    print("editing table numbers...")
     timestamp=datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')  
     tables = editTableNumbers(tables)
+    print("writing seating chart...")
     writeSeatingChart(tables, timestamp)    
+    print("writing tables...")
     writeTables(tables, emails, timestamp, True)
     writeTables(tables, emails, timestamp, False)
     

@@ -15,11 +15,14 @@ except:
     import pickle
 import xlrd, xlwt
 
+
+def formatNameWithoutFamilyName(guest):
+    if '-' in guest:
+        guest = guest.split('-')[-1].strip()
+    return guest    
+
 ## read guest data from pickle, but read seating chart from excel because it might be changed manually
 def readSeatingChart():
-
-        
-    
     # Make a top-level instance and hide since it is ugly and big.
     root = tkinter.Tk()
     root.withdraw()
@@ -119,6 +122,8 @@ if __name__ == "__main__":
     timestamp=datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')  
     with open('guest_data.p', 'rb') as f:    
         guests, antiRequests, emails = pickle.load(f)    
+#    for guestName, email in emails.items(): 
+#        print(f"2222 -- {guestName}, {email}")
         
     tables = readSeatingChart()
     
