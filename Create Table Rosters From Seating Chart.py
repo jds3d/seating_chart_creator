@@ -37,15 +37,15 @@ def readSeatingChart():
     root.lift()
     root.focus_force()
     
-    file_path = askopenfilename(parent=root) # Or some other dialog
+    file_path = askopenfilename(parent=root)  # Or some other dialog
 
 #    file_path = filedialog.askopenfilename(parent=root, title = "Select Seating Chart_yyyy-mm-dd_tttttt.xls file.")
-    
     
     wb = xlrd.open_workbook(file_path)
     xl_sheet = wb.sheet_by_index(0)    
     print('readSeatingChart: processing', xl_sheet.name)
-    ## create tables List of sets of guests from excel file
+
+    # create tables List of sets of guests from excel file
     tablesDict = {}
     for row_idx in range(1, xl_sheet.nrows):    # Iterate through rows, don't include header    
         tableNum = xl_sheet.cell(row_idx, 0).value   
