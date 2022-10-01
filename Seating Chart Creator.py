@@ -23,8 +23,8 @@ def readGuestList():
     antiRequests = {} ## dictionary, key is guestName, value is who they can't sit with
     guests = {} ## dictionary, key is guestName and value is set of baggages
     emails = {}
-    wb = xlrd.open_workbook('Seating Chart Creator.xlsx')
-    xl_sheet = wb.sheet_by_name('Punchbowl_Event_Guest_List.1')    
+    wb = xlrd.open_workbook('Seating Chart Creator.xls')
+    xl_sheet = wb.sheet_by_name('Punchbowl_Event_Guest_List')    
     
     for row_idx in range(1, xl_sheet.nrows):    # Iterate through rows, don't include header        
         if xl_sheet.cell(row_idx, 4).value == 'Yes':
@@ -232,6 +232,8 @@ def writeTables(tables, emails, timestamp, writeEmails):
     
     
     if not writeEmails:
+        
+
 
         # font
         font = xlwt.Font()

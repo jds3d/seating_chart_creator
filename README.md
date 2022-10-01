@@ -2,7 +2,7 @@
 This creates a seating chart from an excel document for a variable number of guests with configurable sized tables.  You can add pairs of people who want to sit together and pairs of people who don't want to sit together.
 
 # Steps:
-1) Create "Seating Chart Creator.xlsx" in the format of "Seating Chart Creator - Template.xlsx"
+1) Create "Seating Chart Creator.xls" in the format of "Seating Chart Creator - Template.xls"
    1) It has to have the following sheets: 
       1) "Punchbowl_Event_Guest_List.1"
       2) "Requests"
