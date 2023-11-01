@@ -50,6 +50,7 @@ def readSeatingChart():
     for row_idx in range(1, xl_sheet.nrows):    # Iterate through rows, don't include header    
         tableNum = xl_sheet.cell(row_idx, 0).value   
         
+
         guestName = xl_sheet.cell(row_idx, 1).value.strip()
         if tableNum not in tablesDict:
             tablesDict[tableNum] = set()
@@ -58,6 +59,7 @@ def readSeatingChart():
 #        print('readSeatingChart: table number {}: guest {}'.format(tableNum, guestName))
         
     tablesList = []
+    print(tablesDict)
     for tableNum in sorted(tablesDict):
         tablesList.append(tablesDict[tableNum])
     return tablesList

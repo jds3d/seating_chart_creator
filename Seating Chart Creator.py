@@ -1,9 +1,10 @@
-# -*- coding: utf-8 -*-
+# -- coding: utf-8 --
 """
-Created on Sat Nov 17 10:07:26 2018
+Created on Sat Feb  9 12:13:07 2019
 
-@author: jds3d
+@author: Josh
 """
+
 import xlrd, xlwt
 import datetime
 import sys
@@ -50,7 +51,9 @@ def readGuestList():
 
     for row_idx in range(1, xl_sheet.nrows):
         guestName = removeDoubleSpaces(xl_sheet.cell(row_idx, 0).value.strip())
+       # print(row_idx,xl_sheet.cell(row_idx,1))
         request = removeDoubleSpaces(xl_sheet.cell(row_idx, 1).value.strip())
+    
         if request != '':
             if request in guests:
                 guests[request].add(guestName)
@@ -282,6 +285,10 @@ def writeTables(tables, emails, timestamp, writeEmails):
     outputFilename = 'output/Table Rosters' + '_' + ('emails' if writeEmails else 'no emails') + '_' + timestamp + '.xls'
     print('saving table rosters...', outputFilename)
     wb.save(outputFilename)
+
+
+
+
     
 def editTableNumbers(tables):
     ## edit the table numbers?
