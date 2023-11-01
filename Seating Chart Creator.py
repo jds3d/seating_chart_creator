@@ -4,26 +4,28 @@ Created on Sat Nov 17 10:07:26 2018
 
 @author: jds3d
 """
-import xlrd, xlwt
+import xlrd
+import xlwt
 import datetime
 import sys
 import pprint
 import random
-try:
-    import cPickle as pickle
-except:
-    import pickle
+import pickle
+import os
+
 
 def removeDoubleSpaces(name):
     while '  ' in name:
         name = name.replace('  ', ' ')
     return name
-## read data from Punchbowl_Event_Guest_List.1
+
+
+# read data from Punchbowl_Event_Guest_List.1
 def readGuestList():
     antiRequests = {} ## dictionary, key is guestName, value is who they can't sit with
     guests = {} ## dictionary, key is guestName and value is set of baggages
     emails = {}
-    wb = xlrd.open_workbook('Seating Chart Creator.xlsx')
+    wb = xlrd.open_workbook('Seating Chart Creator.xls')
     xl_sheet = wb.sheet_by_name('Punchbowl_Event_Guest_List.1')    
     
     for row_idx in range(1, xl_sheet.nrows):    # Iterate through rows, don't include header        
@@ -222,6 +224,16 @@ def writeSeatingChart(tables, timestamp):
     
     outputFilename = 'output/Seating Chart' + '_' + timestamp + '.xls'
     print('saving seating chart...', outputFilename)
+
+    path = 'output'
+    # Check whether the specified path exists or not
+    pathExists = os.path.exists(path)
+
+    if not pathExists:
+        # Create a new directory because it does not exist
+        os.makedirs(path)
+        print("/output has been created!")
+
     wb.save(outputFilename)
     
 def writeTables(tables, emails, timestamp, writeEmails):
@@ -243,7 +255,6 @@ def writeTables(tables, emails, timestamp, writeEmails):
         borders = xlwt.Borders()
         borders.bottom = xlwt.Borders.DASHED
         style.borders = borders
-        
 
     for table in tables:
         row_idx = 0
@@ -252,7 +263,6 @@ def writeTables(tables, emails, timestamp, writeEmails):
         sheet.portrait = writeEmails
         sheet.write(row_idx, col_idx, 'Table {} -- {} people'.format(i, len(table)), style=style); col_idx += 1
         if writeEmails: sheet.write(row_idx, col_idx, 'Email'); col_idx += 1
-        
         
         for guest in sorted(table):
             row_idx += 1
@@ -280,29 +290,25 @@ def writeTables(tables, emails, timestamp, writeEmails):
     outputFilename = 'output/Table Rosters' + '_' + ('emails' if writeEmails else 'no emails') + '_' + timestamp + '.xls'
     print('saving table rosters...', outputFilename)
     wb.save(outputFilename)
-    
+
+
 def editTableNumbers(tables):
-    ## edit the table numbers?
+    # edit the table numbers?
     finish = ""
     while finish not in ('n', 'y'):
         finish = input("Would you like to edit the table numbers (y/n)? ")
         if finish == 'n': return tables
-    tableNumbers = set(range(1, len(tables)+4)) ## +4 because we want up to 3 empty tables.
+    tableNumbers = set(range(1, len(tables)+4))  # +4 because we want up to 3 empty tables.
 
-    ## create tables as a dict with key tablenum and value=set of guests, then convert that to a list of sets in that order
+    # create tables as a dict with key tablenum and value=set of guests, then convert that to a list of sets in that order
     newTablesDict = {}
     i = 1
     for table in tables:
         print ('Table {}'.format(i))
         for guest in table:
-            
-            
             print(guest)
         print('Table #s remaining: ', sorted(tableNumbers))
         tableNumber = 0
-        
-        
-        
         
         while tableNumber not in tableNumbers:
             tableNumber = input('What # should this table have? If you hit enter, it will be ' + str(min(tableNumbers)) + ': ')
@@ -320,9 +326,9 @@ def editTableNumbers(tables):
         newTables.append(newTablesDict[tableNumber])
     return newTables
              
-             
-    ## ask what number it should be.  show all numbers that are left.  enter will not change it.
-    
+    # ask what number it should be.  show all numbers that are left.  enter will not change it.
+
+
 if __name__ == "__main__":    
     print("reading guest list...")
     guests, antiRequests, emails = readGuestList()
