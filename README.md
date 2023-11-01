@@ -7,8 +7,6 @@ TABS INCLUDE:
     README.MD*
 
 # Steps
-
-
 1) Create "Seating Chart Creator.xls" in the format of "Seating Chart Creator - Template.xls"
    1) It has to have the following sheets: 
       1) "Punchbowl_Event_Guest_List"
