@@ -24,7 +24,7 @@ def addGuestsRequests(group):
 # first find largest groups and assign them to first table with enough space
 def generateSeatingChart(guests, antiRequests):
     print('generating seating chart...')
-    tables = [set()] ## initialize tables as a list of sets
+    tables = [set()]  # initialize tables as a list of sets
     guestsSeated = set()
     
 #    for key, value in guests.items():

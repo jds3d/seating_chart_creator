@@ -24,10 +24,11 @@ def readGuestList():
 
     # Ask the user to select the column
     print("Available Columns in 'Punchbowl_Event_Guest_List' sheet:")
+    print('0. No additional column required')
     for col_index in range(xl_sheet.ncols):
         print(f"{col_index + 1}. {xl_sheet.cell(0, col_index).value}")
 
-    selected_col_index = int(input("Enter the number corresponding to the column you want to use: ")) - 1
+    selected_col_index = int(input("If you would like an additional column in the seating chart, select it here or (0)?: ")) - 1
 
     for row_idx in range(1, xl_sheet.nrows):    # Iterate through rows, don't include header
         if xl_sheet.cell(row_idx, 4).value == 'Yes':
@@ -47,7 +48,8 @@ def readGuestList():
             emails[formatNameWithoutFamilyName(guestName)] = email
 
             # Extract the data from the user-selected column
-            extraGuestData[guestName] = xl_sheet.cell(row_idx, selected_col_index).value
+            if selected_col_index != 0:
+                extraGuestData[guestName] = xl_sheet.cell(row_idx, selected_col_index).value
             print(row_idx, guestName, email)
 
     ## read data from Requests
@@ -137,13 +139,14 @@ def writeSeatingChart(tables, extraGuestData, timestamp):
             sheet.write(row_idx, 0, tableNum)
             sheet.write(row_idx, 1, formatNameWithoutFamilyName(guest))
             sheet.write(row_idx, 2, len(table))
-            sheet.write(row_idx, 3, extraGuestData[guest])
+            if guest in extraGuestData:
+                sheet.write(row_idx, 3, extraGuestData[guest])
         tableNum += 1
 
     outputFilename = 'output/Seating Chart' + '_' + timestamp + '.xls'
     print('saving seating chart...', outputFilename)
     wb.save(outputFilename)
-
+0
 
 def writeTables(tables, emails, timestamp, writeEmails, extraColumn=None):
     wb = xlwt.Workbook()
