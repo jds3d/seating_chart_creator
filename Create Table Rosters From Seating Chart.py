@@ -89,7 +89,7 @@ if __name__ == "__main__":
 
     tables, headings = readSeatingChart()
 
-    ask_for_column(headings)
+    # ask_for_column(headings)
 
     writeTables(tables, emails, timestamp, True, extraColumn=headings)
     writeTables(tables, emails, timestamp, False, extraColumn=headings)
