@@ -158,7 +158,7 @@ def writeTables(tables, emails, timestamp, writeEmails, extraColumn=None):
         # font
         font = xlwt.Font()
         font.height = 640
-        font.bold = True
+        font.bold = False
         style.font = font
 
         # borders
@@ -170,8 +170,8 @@ def writeTables(tables, emails, timestamp, writeEmails, extraColumn=None):
         row_idx = 0
         col_idx = 0
         sheet = wb.add_sheet("Table {}".format(i))
-        sheet.portrait = writeEmails
-        sheet.write(row_idx, col_idx, 'Table {} -- {} people'.format(i, len(table)), style=style)
+        sheet.portrait = True
+        sheet.write(row_idx, col_idx, 'Table #{} -- ({} people)'.format(i, len(table)), style=style)
         sheet.col(col_idx).width = 15000
         col_idx += 1
 
