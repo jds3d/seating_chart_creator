@@ -145,8 +145,12 @@ def writeSeatingChart(tables, extraGuestData, timestamp):
 
     outputFilename = 'output/Seating Chart' + '_' + timestamp + '.xls'
     print('saving seating chart...', outputFilename)
+
+    if not os.path.exists('output'):
+        os.makedirs('output')
+
     wb.save(outputFilename)
-0
+
 
 def writeTables(tables, emails, timestamp, writeEmails, extraColumn=None):
     wb = xlwt.Workbook()
