@@ -13,8 +13,8 @@ from utils import writeTables, writeSeatingChart, readGuestList
 
 ###### CONSTANTS ####################
 ###### You can edit these. ##########
-normalTableMaxSize = 6  # no more than this many people will be sat at a table without being part of a larger group.
-singleGroupMaxSize = 6  # above this number, approval will be needed.
+normalTableMaxSize = 8  # no more than this many people will be sat at a table without being part of a larger group.
+singleGroupMaxSize = 9  # above this number, approval will be needed.
 
 
 def addGuestsRequests(group):
@@ -59,6 +59,7 @@ def generateSeatingChart(guests, antiRequests):
             pprint.pprint(group)
             proceed = input("Do you want to allow it? Blank is no, anything else means yes: ")
             if not proceed:
+                print('Exiting so you can fix the configuration.')
                 sys.exit(1)
 
         # seat group
