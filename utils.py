@@ -59,14 +59,13 @@ def readGuestList():
         guestName = removeDoubleSpaces(xl_sheet.cell(row_idx, 0).value.strip())
         request = removeDoubleSpaces(xl_sheet.cell(row_idx, 1).value.strip())
         if request != '':
-            if request in guests:
+            if request in guests and guestName in guests:
                 guests[request].add(guestName)
-                try:
-                    guests[guestName].add(request)
-                except:
-                    print('REQUEST IGNORED: "{}" is not attending this event, so the request with "{}" will be ignored.'.format(guestName, request))
+                guests[guestName].add(request)
+                print(f'Adding request: {request=}, {guestName=}')
             else:
                 print('REQUEST IGNORED: "{}" is not attending this event, so the request with "{}" will be ignored.'.format(request, guestName))
+                # print('REQUEST IGNORED: "{}" is not attending this event, so the request with "{}" will be ignored.'.format(guestName, request))
 
     ## make sure each couple is together
     for guestName, baggageSet in guests.items():
