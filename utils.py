@@ -1,7 +1,7 @@
 import xlrd
 import xlwt
 import pickle
-
+import os
 
 def removeDoubleSpaces(name):
     while '  ' in name:
@@ -142,10 +142,15 @@ def writeSeatingChart(tables, extraGuestData, timestamp):
             if guest in extraGuestData:
                 sheet.write(row_idx, 3, extraGuestData[guest])
         tableNum += 1
-
+        
     outputFilename = 'output/Seating Chart' + '_' + timestamp + '.xls'
     print('saving seating chart...', outputFilename)
+    
+    if not os.path.exists('output'):
+        os.makedirs('output')
+    
     wb.save(outputFilename)
+        
 0
 
 def writeTables(tables, emails, timestamp, writeEmails, extraColumn=None):
