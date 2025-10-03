@@ -133,7 +133,7 @@ def editTableNumbers(tables):
 # ask what number it should be.  show all numbers that are left.  enter will not change it.
 if __name__ == "__main__":
     print("reading guest list...")
-    guests, antiRequests, extraGuestData, emails = readGuestList()
+    guests, antiRequests, extraGuestData, emails, polls = readGuestList()
     print("generating seating chart...")
     tables = generateSeatingChart(guests, antiRequests)
     print("editing table numbers...")
@@ -142,5 +142,5 @@ if __name__ == "__main__":
     print("writing seating chart...")
     writeSeatingChart(tables, extraGuestData, timestamp)
     print("writing tables...")
-    writeTables(tables, emails, timestamp, True)
-    writeTables(tables, emails, timestamp, False, extraGuestData)
+    writeTables(tables, emails, polls, timestamp, writeEmails=True)
+    writeTables(tables, emails, polls, timestamp, writeEmails=False, extraColumn=extraGuestData)

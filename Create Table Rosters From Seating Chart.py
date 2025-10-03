@@ -85,11 +85,11 @@ def ask_for_column(column_headings):
 if __name__ == "__main__":    
     timestamp=datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
     with open('guest_data.p', 'rb') as f:    
-        guests, antiRequests, emails = pickle.load(f)    
+        guests, antiRequests, emails, polls = pickle.load(f)    
 
     tables, headings = readSeatingChart()
 
     # ask_for_column(headings)
 
-    writeTables(tables, emails, timestamp, True, extraColumn=headings)
-    writeTables(tables, emails, timestamp, False, extraColumn=headings)
+    writeTables(tables, emails, polls, timestamp, writeEmails=True, extraColumn=headings)
+    writeTables(tables, emails, polls, timestamp, writeEmails=False, extraColumn=headings)
