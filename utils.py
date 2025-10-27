@@ -83,7 +83,8 @@ def readGuestList():
 
             guests[guestName] = set()
             emails[formatNameWithoutFamilyName(guestName)] = email
-            
+
+            poll = None
             if poll_col_index:
                 poll = xl_sheet.cell(row_idx, poll_col_index).value.strip()
                 polls[formatNameWithoutFamilyName(guestName)] = poll
@@ -91,7 +92,7 @@ def readGuestList():
             # Extract the data from the user-selected column
             if selected_col_index != 0:
                 extraGuestData[guestName] = xl_sheet.cell(row_idx, selected_col_index).value
-            print(row_idx, guestName, email, poll or None)
+            print(row_idx, guestName, email, poll)
 
     ## read data from Requests
     xl_sheet = wb.sheet_by_name('Requests')
