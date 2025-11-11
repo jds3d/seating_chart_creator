@@ -45,7 +45,8 @@ def readGuestList():
     poll_col_index = None
     try:
         print(header)
-        poll_col_index = header.index("Please choose one:")
+        # poll_col_index = header.index("Please choose one:")
+        poll_col_index = 6
     except ValueError:
         print("❌ ERROR: No 'Please choose one:' column found in Punchbowl_Event_Guest_List sheet.")
             
