@@ -201,13 +201,18 @@ def writeTables(tables, emails, polls, timestamp, writeEmails, extraColumn=None)
     wb = xlwt.Workbook()
     i = 1
 
+    outputFilename = 'output/Table Rosters' + '_' + (
+        'emails' if writeEmails else 'no emails') + '_' + timestamp + '.xls'
+    # xlwt expects bytes for footer_str (Python 3 compatibility)
+    footer_path = os.path.abspath(outputFilename).encode('utf-8')
+
     style = xlwt.XFStyle()
 
     if not writeEmails:
-        # font
+        # font - slightly smaller so it fits on one page
         font = xlwt.Font()
-        font.height = 640
-        font.bold = False
+        font.height = 400  # 20pt - reduced from 640
+        font.bold = True
         style.font = font
 
         # borders
@@ -220,48 +225,85 @@ def writeTables(tables, emails, polls, timestamp, writeEmails, extraColumn=None)
         col_idx = 0
         sheet = wb.add_sheet("Table {}".format(i))
         sheet.portrait = True
-        sheet.write(row_idx, col_idx, 'Table #{} -- ({} people)'.format(i, len(table)), style=style)
-        sheet.col(col_idx).width = 15000
-        col_idx += 1
+        sheet.footer_str = footer_path
 
         if writeEmails:
+            sheet.write(row_idx, col_idx, 'Table #{} -- ({} people)'.format(i, len(table)), style=style)
+            sheet.col(col_idx).width = 15000
+            col_idx += 1
             sheet.write(row_idx, col_idx, 'Email')
             col_idx += 1
         else:
-            # font
-            sheet.write(row_idx, col_idx, 'Choice', style=style)
-            col_idx += 1
+            # Row 0: "Table #1" centered and larger across the top (merged)
+            title_style = xlwt.XFStyle()
+            title_font = xlwt.Font()
+            title_font.height = 560  # ~28pt - larger
+            title_font.bold = True
+            title_style.font = title_font
+            title_style.alignment = xlwt.Alignment()
+            title_style.alignment.horz = xlwt.Alignment.HORZ_CENTER
+            sheet.write_merge(0, 0, 0, 1, 'Table #{}'.format(i), style=title_style)
+            sheet.col(0).width = 10000
+            sheet.col(1).width = 8000
+
+            # Row 1: Name and Choice headers (underlined with solid line, darker than dashed separators)
+            header_style = xlwt.XFStyle()
+            header_font = xlwt.Font()
+            header_font.height = 400
+            header_font.bold = True
+            header_style.font = header_font
+            header_borders = xlwt.Borders()
+            header_borders.bottom = xlwt.Borders.THIN  # Solid line, darker than DASHED
+            header_style.borders = header_borders
+            sheet.write(1, 0, 'Name', style=header_style)
+            sheet.write(1, 1, 'Choice', style=header_style)
 
             font = xlwt.Font()
-            font.height = 640
-            font.bold = False
+            font.height = 400
+            font.bold = True
             style = xlwt.XFStyle()
             style.font = font
+            borders = xlwt.Borders()
+            borders.bottom = xlwt.Borders.DASHED
+            style.borders = borders
 
         for guest in sorted(table):
             row_idx += 1
             col_idx = 0
 
+            if writeEmails:
+                data_row = row_idx
+            else:
+                data_row = row_idx + 1  # Skip title row (0) and header row (1)
+
             if '-' in guest:
-                sheet.write(row_idx, col_idx, guest.split('-')[-1].strip(), style=style)
+                sheet.write(data_row, col_idx, guest.split('-')[-1].strip(), style=style)
                 col_idx += 1
             else:
-                sheet.write(row_idx, col_idx, guest, style=style)
+                sheet.write(data_row, col_idx, guest, style=style)
                 col_idx += 1
             try:
                 if writeEmails:
-                    sheet.write(row_idx, col_idx, emails[formatNameWithoutFamilyName(guest)])
+                    sheet.write(data_row, col_idx, emails[formatNameWithoutFamilyName(guest)])
                 else:
-                    # print(1, extraColumn)
-                    sheet.write(row_idx, col_idx, extraColumn[guest], style=style)
-                    col_idx += 1
-                    sheet.write(row_idx, col_idx, polls[formatNameWithoutFamilyName(guest)])
+                    sheet.write(data_row, col_idx, extraColumn[guest], style=style)
             except:
                 if writeEmails:
-                    sheet.write(row_idx, col_idx, '')
+                    sheet.write(data_row, col_idx, '')
+
+        if not writeEmails:
+            # Footnote: "-- (8 people)" centered at bottom (row 0=title, 1=headers, 2+=guests)
+            footnote_row = 2 + len(table)
+            footnote_style = xlwt.XFStyle()
+            footnote_font = xlwt.Font()
+            footnote_font.height = 180  # ~9pt - small, for organizer only
+            footnote_font.bold = False
+            footnote_style.font = footnote_font
+            footnote_style.alignment = xlwt.Alignment()
+            footnote_style.alignment.horz = xlwt.Alignment.HORZ_CENTER
+            sheet.write_merge(footnote_row, footnote_row, 0, 1,
+                             '({} people)'.format(len(table)), style=footnote_style)
 
         i += 1
-    outputFilename = 'output/Table Rosters' + '_' + (
-        'emails' if writeEmails else 'no emails') + '_' + timestamp + '.xls'
     print('saving table rosters...', outputFilename)
     wb.save(outputFilename)

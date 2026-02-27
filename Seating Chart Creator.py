@@ -17,7 +17,7 @@ normalTableMaxSize = 8  # no more than this many people will be sat at a table w
 singleGroupMaxSize = 9  # above this number, approval will be needed.
 
 
-def addGuestsRequests(group):
+def addGuestsRequests(group, guests):
     for guestName in group.copy():
         try:
             group |= guests[guestName]
@@ -26,31 +26,48 @@ def addGuestsRequests(group):
     return group
 
 
+def _expandAllGroups(guests):
+    """Expand all guest groups (family + requests) until no more changes."""
+    changed = True
+    while changed:
+        changed = False
+        for k in guests:
+            old_len = len(guests[k])
+            guests[k] = addGuestsRequests(guests[k].copy(), guests)
+            if len(guests[k]) > old_len:
+                changed = True
+
+
 # generate seating chart
 # first find largest groups and assign them to first table with enough space
+# singles (people with no seating requests) are seated together in their own tables
 def generateSeatingChart(guests, antiRequests):
     print('generating seating chart...')
     tables = [set()]  # initialize tables as a list of sets
     guestsSeated = set()
 
-    # randomize the guestList so you don't have the same people sitting next to each other every time.       
+    # expand all groups first so we can correctly identify singles vs groups
+    _expandAllGroups(guests)
+
+    # randomize the guestList so you don't have the same people sitting next to each other every time.
     guestList = [(k, v) for k, v in guests.items()]
     random.shuffle(guestList)
 
-    #    guestList.sort(key=lambda x:len(x[1]))
-    for guest in sorted(guestList, key=lambda k: len(guestList[1]), reverse=True):
+    # split into groups (size > 1) and singles (size == 1)
+    groupsToSeat = [(k, v) for k, v in guestList if len(v) > 1]
+    singlesToSeat = [(k, v) for k, v in guestList if len(v) == 1]
+
+    # sort groups by size (largest first)
+    groupsToSeat = sorted(groupsToSeat, key=lambda x: len(x[1]), reverse=True)
+
+    # Phase 1: seat groups (families, couples, etc.)
+    for guest in groupsToSeat:
         k = guest[0]
-        if k in guestsSeated: continue  # don't seat guests that have already been seated via other guests' baggage
+        if k in guestsSeated:
+            continue
 
-        # count the number of guests in this group (family and baggage together)
-        group = set()
-        numInGroup = len(group)
         group = guests[k]
-        while len(group) > numInGroup:
-            numInGroup = len(group)
-            group = addGuestsRequests(group)
-
-        guests[k] = group
+        numInGroup = len(group)
 
         if numInGroup > singleGroupMaxSize:
             print('Group has {} people, larger than max of {}'.format(numInGroup, singleGroupMaxSize))
@@ -77,20 +94,63 @@ def generateSeatingChart(guests, antiRequests):
                                     print(p1)
                                     # don't seat them here.
                                     doNotSitHere = True
-                        if doNotSitHere: break
+                        if doNotSitHere:
+                            break
                 # assign to table everyone in this group and the current person
-                if doNotSitHere: continue  # try all the rest of the tables too before creating a new one.
+                if doNotSitHere:
+                    continue  # try all the rest of the tables too before creating a new one.
                 table |= guests[k]
                 groupAdded = True
                 break
-        if not (groupAdded):
+        if not groupAdded:
             table = set()
             table |= guests[k]
             tables.append(table)
-        guestsSeated |= table
+        guestsSeated |= group
 
-        # randomize the tables so that 
+        # randomize the tables so that
         random.shuffle(tables)
+
+    # Phase 2: seat singles together on dedicated tables
+    for guest in singlesToSeat:
+        k = guest[0]
+        if k in guestsSeated:
+            continue
+
+        group = guests[k]
+        groupAdded = False
+
+        # try to add to an existing singles-only table with space
+        for table in tables:
+            if len(table) >= normalTableMaxSize:
+                continue
+            # only add to tables that have only singles (or are empty)
+            if any(len(guests[p]) > 1 for p in table):
+                continue
+            # check anti-requests
+            doNotSitHere = False
+            for p1 in group:
+                if p1 in antiRequests:
+                    for antiRequest in antiRequests[p1]:
+                        if antiRequest in table:
+                            doNotSitHere = True
+                            break
+                if doNotSitHere:
+                    break
+            if doNotSitHere:
+                continue
+            table |= group
+            groupAdded = True
+            break
+
+        if not groupAdded:
+            new_table = set()
+            new_table |= group
+            tables.append(new_table)
+        guestsSeated |= group
+
+        random.shuffle(tables)
+
     return tables
 
 
