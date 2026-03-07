@@ -44,8 +44,15 @@ def readSeatingChart():
     # Extract column headings from the first row
     column_headings = [xl_sheet.cell(0, col).value for col in range(xl_sheet.ncols)]
 
-    # Create tables List of sets of guests from excel file
+    # Find Choice column index (for table roster output)
+    try:
+        choice_col_index = column_headings.index("Choice")
+    except ValueError:
+        choice_col_index = None
+
+    # Create tables List of sets of guests from excel file; also map guest -> choice
     tablesDict = {}
+    guestChoice = {}
     for row_idx in range(1, xl_sheet.nrows):  # Iterate through rows, excluding the header
         tableNum = xl_sheet.cell(row_idx, 0).value
         guestName = xl_sheet.cell(row_idx, 1).value.strip()
@@ -55,11 +62,17 @@ def readSeatingChart():
 
         tablesDict[tableNum].add(guestName)
 
+        if choice_col_index is not None and choice_col_index < xl_sheet.ncols:
+            val = xl_sheet.cell(row_idx, choice_col_index).value
+            guestChoice[guestName] = val if val else ""
+        else:
+            guestChoice[guestName] = ""
+
     tablesList = []
     for tableNum in sorted(tablesDict):
         tablesList.append(tablesDict[tableNum])
 
-    return tablesList, column_headings
+    return tablesList, guestChoice
 
 
 def ask_for_column(column_headings):
@@ -87,9 +100,7 @@ if __name__ == "__main__":
     with open('guest_data.p', 'rb') as f:    
         guests, antiRequests, emails, polls = pickle.load(f)    
 
-    tables, headings = readSeatingChart()
+    tables, guestChoice = readSeatingChart()
 
-    # ask_for_column(headings)
-
-    writeTables(tables, emails, polls, timestamp, writeEmails=True, extraColumn=headings)
-    writeTables(tables, emails, polls, timestamp, writeEmails=False, extraColumn=headings)
+    writeTables(tables, emails, polls, timestamp, writeEmails=True, extraColumn=guestChoice)
+    writeTables(tables, emails, polls, timestamp, writeEmails=False, extraColumn=guestChoice)
