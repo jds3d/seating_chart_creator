@@ -44,11 +44,12 @@ def readGuestList():
 
     poll_col_index = None
     try:
-        print(header)
-        # poll_col_index = header.index("Please choose one:")
-        poll_col_index = 6
+        print(f'{header=}')
+        print('If you want to have a poll it has be titled "Please choose one:"')
+        poll_col_index = header.index("Please choose one:")
+
     except ValueError:
-        print("❌ ERROR: No 'Please choose one:' column found in Punchbowl_Event_Guest_List sheet.")
+        print("❌ WARNING: No 'Please choose one:' column found in Punchbowl_Event_Guest_List sheet.")
             
 
     try:
@@ -87,6 +88,7 @@ def readGuestList():
 
             poll = None
             if poll_col_index:
+                print(row_idx, poll_col_index)
                 poll = xl_sheet.cell(row_idx, poll_col_index).value.strip()
                 polls[formatNameWithoutFamilyName(guestName)] = poll
 
