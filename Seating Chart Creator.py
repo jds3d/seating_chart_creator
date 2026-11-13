@@ -38,9 +38,45 @@ def _expandAllGroups(guests):
                 changed = True
 
 
+def _tables_conflict(left, right, antiRequests):
+    for person in left:
+        blocked = antiRequests.get(person, ())
+        if any(other in blocked for other in right):
+            return True
+    for person in right:
+        blocked = antiRequests.get(person, ())
+        if any(other in blocked for other in left):
+            return True
+    return False
+
+
+def _merge_tables_that_fit(tables, antiRequests):
+    """Join leftover tables when the combined group still fits and nobody asked to be separated."""
+    tables = [table for table in tables if table]
+    merged = True
+    while merged:
+        merged = False
+        tables.sort(key=len)
+        for i in range(len(tables)):
+            for j in range(i + 1, len(tables)):
+                if len(tables[i]) + len(tables[j]) > normalTableMaxSize:
+                    continue
+                if _tables_conflict(tables[i], tables[j], antiRequests):
+                    continue
+                print('Combining a table of {} with a table of {}.'.format(len(tables[i]), len(tables[j])))
+                tables[i] |= tables[j]
+                del tables[j]
+                merged = True
+                break
+            if merged:
+                break
+    return tables
+
+
 # generate seating chart
 # first find largest groups and assign them to first table with enough space
 # singles (people with no seating requests) are seated together in their own tables
+# then small leftover tables are combined when they still fit
 def generateSeatingChart(guests, antiRequests):
     print('generating seating chart...')
     tables = [set()]  # initialize tables as a list of sets
@@ -151,7 +187,7 @@ def generateSeatingChart(guests, antiRequests):
 
         random.shuffle(tables)
 
-    return tables
+    return _merge_tables_that_fit(tables, antiRequests)
 
 
 def editTableNumbers(tables):
@@ -193,7 +229,8 @@ def editTableNumbers(tables):
 # ask what number it should be.  show all numbers that are left.  enter will not change it.
 if __name__ == "__main__":
     print("reading guest list...")
-    guests, antiRequests, extraGuestData, emails, polls = readGuestList()
+    export_path = sys.argv[1] if len(sys.argv) > 1 else None
+    guests, antiRequests, extraGuestData, emails, polls = readGuestList(export_path)
     print("generating seating chart...")
     tables = generateSeatingChart(guests, antiRequests)
     print("editing table numbers...")

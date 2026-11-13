@@ -6,10 +6,11 @@ Created on Sat Feb  9 12:13:07 2019
 """
   
 import datetime
+import sys
 import tkinter
 from tkinter.filedialog import askopenfilename
 import pickle
-import xlrd
+from openpyxl import load_workbook
 from utils import writeTables
 
 
@@ -35,38 +36,50 @@ def readSeatingChart():
     root.lift()
     root.focus_force()
 
-    file_path = askopenfilename(parent=root)  # Or some other dialog
+    file_path = askopenfilename(
+        parent=root,
+        title='Select a seating chart',
+        filetypes=[('Excel workbook', '*.xlsx'), ('All files', '*.*')],
+    )
+    root.destroy()
+    if not file_path:
+        print('No seating chart selected.')
+        sys.exit(1)
 
-    wb = xlrd.open_workbook(file_path)
-    xl_sheet = wb.sheet_by_index(0)
-    print('readSeatingChart: processing', xl_sheet.name)
-
-    # Extract column headings from the first row
-    column_headings = [xl_sheet.cell(0, col).value for col in range(xl_sheet.ncols)]
-
-    # Find Choice column index (for table roster output)
+    wb = load_workbook(file_path, data_only=True, read_only=True)
     try:
-        choice_col_index = column_headings.index("Choice")
-    except ValueError:
-        choice_col_index = None
+        xl_sheet = wb.worksheets[0]
+        print('readSeatingChart: processing', xl_sheet.title)
+        rows = xl_sheet.iter_rows(values_only=True)
+        header = next(rows)
+        column_headings = ['' if cell is None else str(cell) for cell in header]
 
-    # Create tables List of sets of guests from excel file; also map guest -> choice
-    tablesDict = {}
-    guestChoice = {}
-    for row_idx in range(1, xl_sheet.nrows):  # Iterate through rows, excluding the header
-        tableNum = xl_sheet.cell(row_idx, 0).value
-        guestName = xl_sheet.cell(row_idx, 1).value.strip()
+        try:
+            choice_col_index = column_headings.index("Choice")
+        except ValueError:
+            choice_col_index = None
 
-        if tableNum not in tablesDict:
-            tablesDict[tableNum] = set()
+        tablesDict = {}
+        guestChoice = {}
+        for row in rows:
+            if not row or row[0] is None or row[1] is None:
+                continue
+            tableNum = row[0]
+            guestName = str(row[1]).strip()
+            if not guestName:
+                continue
 
-        tablesDict[tableNum].add(guestName)
+            if tableNum not in tablesDict:
+                tablesDict[tableNum] = set()
+            tablesDict[tableNum].add(guestName)
 
-        if choice_col_index is not None and choice_col_index < xl_sheet.ncols:
-            val = xl_sheet.cell(row_idx, choice_col_index).value
-            guestChoice[guestName] = val if val else ""
-        else:
-            guestChoice[guestName] = ""
+            if choice_col_index is not None and choice_col_index < len(row):
+                val = row[choice_col_index]
+                guestChoice[guestName] = val if val else ""
+            else:
+                guestChoice[guestName] = ""
+    finally:
+        wb.close()
 
     tablesList = []
     for tableNum in sorted(tablesDict):

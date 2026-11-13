@@ -7,25 +7,21 @@ TABS INCLUDE:
     README.MD*
 
 # Steps
-1) Create "Seating Chart Creator.xls" in the format of "Seating Chart Creator - Template.xls"
-   1) It has to have the following sheets: 
-      1) "Punchbowl_Event_Guest_List"
-          a) Download from Punchbowl in csv format.
-          b) Copy and paste the data from the csv into the 1st tab (Punchbowl_event_Guest_List) in Seating Chart Creator.xls
-      2) "Requests"
-          a) Edit this manually
-      3) "Antirequests" 
-          a) Edit this manually
-          
-          
-GO TO TAB "Seatin Chart Creator.py" to start          
-2) Execute "Seating Chart Creator.py" which will pick up that excel file.
+1) Keep `Requests.xlsx` in this folder. It always has that name and two tabs:
+   1) "Requests" — people who should sit together (Name, Sit with)
+   2) "Antirequests" — people who should not sit together (Name, Do not sit with)
+   Row 1 is the header. One pair per row. Names should match the attendee names in the export.
+2) Download a new collection summary from Cheddar Up. Leave that file as-is. Do not rename its tabs.
+3) Execute "Seating Chart Creator.py".
     a) F5 or the Green/Black Play Button (sideways triangle flag).
-    b) Note: if you have to redo it, right click on the right pane (Console) and click Quit.
-3) If necessary, execute "Create Table Rosters From Seating Chart.py" which uses the output from step 2.
+    b) Choose the new Cheddar Up export when the file window opens. Guest names are read from the 5th and 6th tabs only.
+    c) If you have to redo it, right click on the right pane (Console) and click Quit.
+4) If necessary, execute "Create Table Rosters From Seating Chart.py" which uses the output from step 3.
+
+The old Punchbowl template is `punchbowl_Seating Chart Creator - Template.xls`.
 
 # Note:
-xlrd library no longer supports xlsx as of March 2022, so make sure to use xls file formats.
+The Cheddar Up export, Requests.xlsx, seating chart, and table rosters are xlsx files.
 maddy--check .1 and get josh to change it?
 right click "quit" if you have to start over
 go to output for seating charts and table rosters

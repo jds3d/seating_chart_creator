@@ -2,3 +2,5 @@ Seating Chart Creator.xls
 /output
 *.p
 *.pyc
+/*.xlsx
+!/*[Tt]emplate*.xlsx
