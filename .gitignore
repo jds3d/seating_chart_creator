@@ -10,3 +10,4 @@ dist/
 release/
 *.spec
 error.log
+/configuration.json

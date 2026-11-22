@@ -4,6 +4,7 @@
 import contextlib
 import datetime
 import importlib.util
+import json
 import os
 import pickle
 import sys
@@ -35,6 +36,33 @@ def work_dir():
 
 
 APP_DIR = work_dir()
+CONFIG_FILE = 'configuration.json'
+
+
+def _config_path():
+    return os.path.join(APP_DIR, CONFIG_FILE)
+
+
+def _read_config():
+    try:
+        with open(_config_path(), encoding='utf-8') as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_cheddar_up_export():
+    saved = _read_config().get('cheddar_up_export', '')
+    return saved.strip() if isinstance(saved, str) else ''
+
+
+def _save_cheddar_up_export(path):
+    data = _read_config()
+    data['cheddar_up_export'] = path
+    with open(_config_path(), 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, indent=2)
+        handle.write('\n')
 
 
 def _ensure_stdio():
@@ -217,10 +245,13 @@ class App(ttk.Frame):
         super().__init__(master, padding=16)
         self.creator = creator
         self.rosters = rosters
-        self.export_var = tk.StringVar()
+        self.export_var = tk.StringVar(value=_load_cheddar_up_export())
         self.table_size_var = tk.StringVar(value=str(creator.normalTableMaxSize))
         self.group_limit_var = tk.StringVar(value=str(creator.singleGroupMaxSize))
-        self.status_var = tk.StringVar(value='Choose a Cheddar Up export and a requests workbook.')
+        saved_export = self.export_var.get().strip()
+        self.status_var = tk.StringVar(
+            value=os.path.basename(saved_export) if saved_export else 'Choose a Cheddar Up export and a requests workbook.'
+        )
 
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
@@ -291,7 +322,14 @@ class App(ttk.Frame):
 
         status = ttk.Label(self, textvariable=self.status_var, style='Hint.TLabel')
         status.grid(row=4, column=0, sticky='w', pady=(8, 0))
-        self._log('Choose a Cheddar Up collection summary and a requests workbook, then create a seating chart.\n')
+        if saved_export:
+            self._log('Using the saved Cheddar Up export:\n{}\n'.format(saved_export))
+            if os.path.isfile(saved_export):
+                self._log('Browse to pick a different file.\n')
+            else:
+                self._log('That file was not found. Browse to pick the new one.\n')
+        else:
+            self._log('Choose a Cheddar Up collection summary and a requests workbook, then create a seating chart.\n')
 
     def browse_export(self):
         current = self.export_var.get().strip()
@@ -307,6 +345,7 @@ class App(ttk.Frame):
         self.export_var.set(path)
         self.export_entry.xview_moveto(1)
         self.status_var.set(os.path.basename(path))
+        self._remember_export(path)
 
     def browse_requests(self):
         current = self.requests_var.get().strip()
@@ -322,6 +361,12 @@ class App(ttk.Frame):
         self.requests_var.set(path)
         self.requests_entry.xview_moveto(1)
         self.status_var.set(os.path.basename(path))
+
+    def _remember_export(self, path):
+        try:
+            _save_cheddar_up_export(path)
+        except OSError as error:
+            self._log('Could not save the Cheddar Up export path: {}\n'.format(error))
 
     def open_output_folder(self):
         folder = os.path.join(APP_DIR, 'output')
@@ -346,6 +391,7 @@ class App(ttk.Frame):
         if os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(requests_path)):
             messagebox.showerror('Configuration', 'The Cheddar Up export and the requests workbook have to be different files.', parent=self)
             return
+        self._remember_export(path)
         try:
             table_size = _whole_number(self.table_size_var.get(), 'People per table')
             group_limit = _whole_number(self.group_limit_var.get(), 'Group size')

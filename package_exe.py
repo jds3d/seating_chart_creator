@@ -23,13 +23,13 @@ HOW_TO = """Double-click "Seating Chart Creator.exe".
 
 Keep Requests.xlsx in this same folder. The program reads it every time you make a chart.
 
-Pick the Cheddar Up collection summary when the window asks for it. That file can stay in Downloads.
+The window keeps the last Cheddar Up file you selected. Browse again when you download a new one. That file can stay in Downloads.
 
 Finished seating charts and table rosters are saved in the output folder.
 
 When a name or seatmate request needs a decision, the window asks you to fix it.
 Those answers are saved in Corrections.xlsx, in this same folder. You can edit that file in Excel.
-Updating the program does not replace Corrections.xlsx or Requests.xlsx.
+Updating the program does not replace Corrections.xlsx, Requests.xlsx, or the saved Cheddar Up file.
 
 To get a newer program, close Seating Chart Creator, then update this folder with git pull.
 Then double-click the exe again.
