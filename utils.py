@@ -158,6 +158,16 @@ class GuestBook:
         self._applied_keys = set()
         self.unmatched_seatmates = []
         self._seatmate_notes = set()
+        self.raw_seatmates = []
+        self.raw_pair_rows = []
+        self.missing_attendees = []
+        self.incomplete_names = []
+        self.email_conflicts = []
+        self.choice_conflicts = []
+        self.unclaimed_choices = []
+        self.possible_duplicates = []
+        self.placeholder_keys = set()
+        self.real_name_keys = set()
         self.linked_requests = []
         self.ignored_requests = []
         self.linked_antis = []
@@ -188,6 +198,7 @@ class GuestBook:
         stored_as = formatNameWithoutFamilyName(canonical)
         current = self.emails.get(stored_as, '')
         if current and current.casefold() != email.casefold():
+            self.email_conflicts.append({'guest': canonical, 'first': current, 'second': email})
             self.warnings.append(
                 '{} has two emails: {!r} and {!r}. Keeping {!r}.'.format(canonical, current, email, current))
             return
@@ -202,6 +213,7 @@ class GuestBook:
             return
         current = self.extra.get(canonical, '')
         if current and current.casefold() != choice.casefold():
+            self.choice_conflicts.append({'guest': canonical, 'first': current, 'second': choice})
             self.warnings.append(
                 '{} has two choices: {!r} and {!r}. Keeping {!r}.'.format(canonical, current, choice, current))
             return
@@ -220,6 +232,8 @@ class GuestBook:
                 pair = tuple(sorted((display_name.casefold(), other.casefold())))
                 if pair not in self._similar_warned:
                     self._similar_warned.add(pair)
+                    ordered = tuple(sorted((display_name, other), key=str.casefold))
+                    self.possible_duplicates.append(ordered)
                     self.warnings.append(
                         'Possible duplicate: "{}" and "{}". They will be seated as two people unless you add a request.'.format(
                             display_name, other))
@@ -265,39 +279,61 @@ class GuestBook:
             return matches[0]
         return None
 
-    def resolve_people(self, raw):
-        """Match a seatmate cell to guests. 'A and B' can match two people."""
+    def explain_people(self, raw):
+        """Split a written name into people. 'A and B' can be two people.
+
+        Each item is part, guest, and approximate. guest is None when nobody matched.
+        """
         original = _as_text(raw)
         cleaned = _norm(original)
         if not cleaned:
-            return [], []
+            return []
         whole = self.match_one(cleaned)
         if whole:
-            return [whole], []
-        parts = [part.strip() for part in re.split(r'\s+and\s+', cleaned, flags=re.IGNORECASE)]
-        if len(parts) > 1:
-            matched = []
-            unmatched = []
-            for index, part in enumerate(parts):
-                found = self.match_one(part)
-                if found is None and len(part.split()) == 1:
-                    for other_index, other in enumerate(parts):
-                        if other_index == index:
-                            continue
-                        other_tokens = other.split()
-                        if len(other_tokens) >= 2:
-                            found = self.match_one(part + ' ' + other_tokens[-1])
-                            if found:
-                                break
-                if found and found not in matched:
-                    matched.append(found)
-                elif not found:
-                    unmatched.append(part)
-            if matched:
-                return matched, unmatched
-        if len(cleaned.split()) > 8:
-            return [], [original]
-        return [], [original]
+            return [{
+                'part': original,
+                'guest': whole,
+                'approximate': _key(whole) != _key(cleaned),
+            }]
+        pieces = [part.strip() for part in re.split(r'\s+and\s+', cleaned, flags=re.IGNORECASE) if part.strip()]
+        if len(pieces) <= 1:
+            return [{'part': original, 'guest': None, 'approximate': False}]
+        explained = []
+        for index, part in enumerate(pieces):
+            found = self.match_one(part)
+            compared = part
+            if found is None and len(part.split()) == 1:
+                for other_index, other in enumerate(pieces):
+                    if other_index == index:
+                        continue
+                    other_tokens = other.split()
+                    if len(other_tokens) >= 2:
+                        candidate = part + ' ' + other_tokens[-1]
+                        found = self.match_one(candidate)
+                        if found:
+                            compared = candidate
+                            break
+            explained.append({
+                'part': part,
+                'guest': found,
+                'approximate': bool(found) and _key(found) != _key(compared),
+            })
+        return explained
+
+    def resolve_people(self, raw):
+        """Match a seatmate cell to guests. 'A and B' can match two people."""
+        explained = self.explain_people(raw)
+        matched = []
+        unmatched = []
+        for item in explained:
+            if item['guest']:
+                if item['guest'] not in matched:
+                    matched.append(item['guest'])
+            else:
+                unmatched.append(item['part'])
+        if matched or unmatched:
+            return matched, unmatched
+        return [], []
 
     def last_name_suggestions(self, text):
         tokens = _key(text).split()
@@ -310,6 +346,26 @@ class GuestBook:
             if len(guest_tokens) >= 2 and guest_tokens[-1] == last and canonical not in found:
                 found.append(canonical)
         return found
+
+    def record_seatmate_cell(self, party, raw_values):
+        for raw in raw_values:
+            raw_text = _as_text(raw)
+            if raw_text:
+                self.raw_seatmates.append((raw_text, list(party)))
+
+    def note_missing_attendee(self, payer, email, choices):
+        key = _key(payer)
+        for item in self.missing_attendees:
+            if _key(item['payer']) == key:
+                for choice in choices:
+                    if choice and choice not in item['choices']:
+                        item['choices'].append(choice)
+                return
+        self.missing_attendees.append({
+            'payer': payer,
+            'email': _as_text(email),
+            'choices': [choice for choice in choices if choice],
+        })
 
     def link_seatmates(self, party, raw_values):
         for raw in raw_values:
@@ -345,6 +401,9 @@ class GuestBook:
             else:
                 self.ignored_antis.append(message)
             return
+        self._link_people(left_matched, right_matched, kind)
+
+    def _link_people(self, left_matched, right_matched, kind):
         for left in left_matched:
             for right in right_matched:
                 if left == right:
@@ -357,6 +416,121 @@ class GuestBook:
                     self.anti.setdefault(left, set()).add(right)
                     self.anti.setdefault(right, set()).add(left)
                     self.linked_antis.append((left, right))
+
+    def record_pair_row(self, left, right, kind):
+        left_text = _as_text(left)
+        right_text = _as_text(right)
+        if not left_text and not right_text:
+            return
+        self.raw_pair_rows.append((left_text, right_text, kind))
+
+    def set_email(self, name, email):
+        canonical = self.by_key.get(_key(name), _norm(name))
+        self.emails[formatNameWithoutFamilyName(canonical)] = _as_text(email)
+
+    def set_choice(self, name, choice):
+        choice = _norm(choice)
+        if not choice:
+            return
+        canonical = self.by_key.get(_key(name))
+        if not canonical:
+            return
+        self.extra[canonical] = choice
+        self.polls[formatNameWithoutFamilyName(canonical)] = choice
+
+    def remove_guest(self, name):
+        canonical = self.by_key.get(_key(name))
+        if not canonical:
+            return
+        self.guests.pop(canonical, None)
+        self.by_key.pop(_key(canonical), None)
+        self.extra.pop(canonical, None)
+        self.anti.pop(canonical, None)
+        for members in self.guests.values():
+            members.discard(canonical)
+        for blocked in self.anti.values():
+            blocked.discard(canonical)
+        short = formatNameWithoutFamilyName(canonical)
+        self.emails.pop(short, None)
+        self.polls.pop(short, None)
+        parties = []
+        for party in self.parties:
+            party = [person for person in party if person != canonical]
+            if len(party) > 1:
+                parties.append(party)
+        self.parties = parties
+        self._party_keys = {frozenset(party) for party in parties}
+        self.raw_seatmates = [
+            (raw, [person for person in party if person != canonical]) for raw, party in self.raw_seatmates]
+        self.placeholder_keys.discard(_key(canonical))
+        self.real_name_keys.discard(_key(canonical))
+
+    def rename_guest(self, old, new):
+        new = _norm(new)
+        source = self.by_key.get(_key(old))
+        if not source or not new:
+            return
+        target = self.by_key.get(_key(new))
+        if target and target != source:
+            self.merge_guest(source, target)
+            return
+        if source == new:
+            return
+        self._retarget_guest(source, new)
+
+    def merge_guest(self, source, target):
+        source = self.by_key.get(_key(source))
+        target = self.by_key.get(_key(target))
+        if not source or not target or source == target:
+            return
+        for other in list(self.guests.get(source, ())):
+            if other in (source, target):
+                continue
+            self.guests[target].add(other)
+            if other in self.guests:
+                self.guests[other].discard(source)
+                self.guests[other].add(target)
+        if source in self.extra and target not in self.extra:
+            self.extra[target] = self.extra[source]
+        source_email = self.emails.get(formatNameWithoutFamilyName(source), '')
+        if source_email and not self.emails.get(formatNameWithoutFamilyName(target), ''):
+            self.emails[formatNameWithoutFamilyName(target)] = source_email
+        self.remove_guest(source)
+
+    def _retarget_guest(self, old, new):
+        group = self.guests.pop(old)
+        self.by_key.pop(_key(old), None)
+        self.by_key[_key(new)] = new
+        self.guests[new] = group
+        for members in self.guests.values():
+            if old in members:
+                members.discard(old)
+                members.add(new)
+        if old in self.extra:
+            self.extra[new] = self.extra.pop(old)
+        if old in self.anti:
+            self.anti[new] = self.anti.pop(old)
+        for blocked in self.anti.values():
+            if old in blocked:
+                blocked.discard(old)
+                blocked.add(new)
+        old_short = formatNameWithoutFamilyName(old)
+        new_short = formatNameWithoutFamilyName(new)
+        if old_short != new_short:
+            if old_short in self.emails:
+                self.emails[new_short] = self.emails.pop(old_short)
+            if old_short in self.polls:
+                self.polls[new_short] = self.polls.pop(old_short)
+        self.parties = [[new if person == old else person for person in party] for party in self.parties]
+        self._party_keys = {frozenset(party) for party in self.parties if len(party) > 1}
+        self.raw_seatmates = [
+            (raw, [new if person == old else person for person in party]) for raw, party in self.raw_seatmates]
+        if _key(old) in self.placeholder_keys:
+            self.placeholder_keys.discard(_key(old))
+            self.placeholder_keys.add(_key(new))
+        if _key(old) in self.real_name_keys:
+            self.real_name_keys.discard(_key(old))
+            self.real_name_keys.add(_key(new))
 
     def finish(self):
         for guest_name in self.guests:
@@ -377,6 +551,10 @@ class GuestBook:
             for raw, canonical, approximate in self.applied_seatmates:
                 suffix = ' (approximate)' if approximate else ''
                 print('  {!r} -> {}{}'.format(raw, canonical, suffix))
+        if getattr(self, 'skipped_seatmates', None):
+            print('\nSeatmate text ignored:')
+            for raw in self.skipped_seatmates:
+                print('  {!r}'.format(raw))
         if self.unmatched_seatmates:
             print('\nSeatmate names not on the guest list:')
             for part, party in self.unmatched_seatmates:
@@ -387,13 +565,13 @@ class GuestBook:
                     line += '. Guests with that last name: {}'.format(', '.join(suggestions))
                 print(line)
         if self.linked_requests:
-            print('\nRequests from {}:'.format(REQUESTS_WORKBOOK))
+            print('\nRequests from {}:'.format(getattr(self, 'requests_name', REQUESTS_WORKBOOK)))
             for left, right in self.linked_requests:
                 print('  {} with {}'.format(left, right))
         for message in self.ignored_requests:
             print(message)
         if self.linked_antis:
-            print('\nAntirequests from {}:'.format(REQUESTS_WORKBOOK))
+            print('\nAntirequests from {}:'.format(getattr(self, 'requests_name', REQUESTS_WORKBOOK)))
             for left, right in self.linked_antis:
                 print('  {} not with {}'.format(left, right))
         for message in self.ignored_antis:
@@ -420,9 +598,10 @@ def _load_workbook(path, label):
 
 def _read_pair_sheet(workbook, sheet_name, book, kind):
     names = workbook.sheetnames
+    label = getattr(book, 'requests_name', REQUESTS_WORKBOOK)
     if sheet_name not in names:
         print('ERROR: {} has no "{}" tab. Tabs found: {}'.format(
-            REQUESTS_WORKBOOK, sheet_name, ', '.join(names)))
+            label, sheet_name, ', '.join(names)))
         sys.exit(1)
     worksheet = workbook[sheet_name]
     for row in worksheet.iter_rows(min_row=2, values_only=True):
@@ -430,16 +609,7 @@ def _read_pair_sheet(workbook, sheet_name, book, kind):
         right = _at(row, 1)
         if not _as_text(left) and not _as_text(right):
             continue
-        if not _as_text(left) or not _as_text(right):
-            label = 'REQUEST' if kind == 'request' else 'ANTI-REQUEST'
-            message = '{} IGNORED: "{}" / "{}" needs a name in both columns.'.format(
-                label, _as_text(left), _as_text(right))
-            if kind == 'request':
-                book.ignored_requests.append(message)
-            else:
-                book.ignored_antis.append(message)
-            continue
-        book.link_request_row(left, right, kind)
+        book.record_pair_row(left, right, kind)
 
 
 def _read_item_sheet(worksheet, position, book):
@@ -487,37 +657,51 @@ def _read_item_sheet(worksheet, position, book):
             if unnamed_choices:
                 extra = ' Choices with no name: {}.'.format(', '.join(unnamed_choices))
             book.warnings.append('No attendee names for payer "{}". Using the payer name.{}'.format(payer, extra))
+            book.note_missing_attendee(payer, email, unnamed_choices)
+            book.placeholder_keys.add(_key(payer))
         elif unnamed_choices:
             book.warnings.append(
                 '{} has choices with no attendee name: {}.'.format(payer or named[0][0], ', '.join(unnamed_choices)))
+            book.unclaimed_choices.append({
+                'payer': payer or named[0][0],
+                'choices': list(unnamed_choices),
+            })
 
         party = []
         for name, choice in named:
             if ' ' not in name and payer and _key(name) != _key(payer):
+                book.incomplete_names.append({'written': name, 'payer': payer, 'choice': choice})
                 book.warnings.append(
                     'Attendee "{}" on {}\'s purchase has no last name, so they are seated as "{}".'.format(
                         name, payer, name))
+            else:
+                book.real_name_keys.add(_key(name))
             canonical = book.add(name, email, choice)
             if canonical and canonical not in party:
                 party.append(canonical)
         party = book.link_party(party)
         seatmates = [_at(row, index) for index in seatmate_indexes]
-        book.link_seatmates(party, seatmates)
+        book.record_seatmate_cell(party, seatmates)
         row_count += 1
     print('Tab {} {!r}: {} purchase rows.'.format(position, worksheet.title, row_count))
 
 
-def readGuestList(export_path=None):
-    """Read guests from a Cheddar Up export and pairs from Requests.xlsx.
+def readGuestList(export_path=None, requests_path=None):
+    """Read guests from a Cheddar Up export and pairs from a requests workbook.
 
     The export is chosen each run. Only the 5th and 6th tabs are used.
-    Requests.xlsx stays in this folder and has Requests and Antirequests tabs.
+    The requests workbook has Requests and Antirequests tabs. When no path is
+    given, Requests.xlsx in the working folder is used.
     """
     if not export_path:
         export_path = chooseExportWorkbook()
     export_path = os.path.abspath(export_path)
-    if os.path.basename(export_path).casefold() == REQUESTS_WORKBOOK.casefold():
-        print('That file is {}. Select the Cheddar Up collection summary instead.'.format(REQUESTS_WORKBOOK))
+    if not requests_path:
+        requests_path = os.path.abspath(REQUESTS_WORKBOOK)
+    else:
+        requests_path = os.path.abspath(requests_path)
+    if os.path.normcase(export_path) == os.path.normcase(requests_path):
+        print('The Cheddar Up export and the requests workbook have to be different files.')
         sys.exit(1)
 
     print('Reading export: {}'.format(export_path))
@@ -535,21 +719,21 @@ def readGuestList(export_path=None):
     finally:
         workbook.close()
 
-    requests_path = os.path.abspath(REQUESTS_WORKBOOK)
     print('Reading {}'.format(requests_path))
-    requests_book = _load_workbook(requests_path, REQUESTS_WORKBOOK)
+    book.requests_name = os.path.basename(requests_path)
+    requests_book = _load_workbook(requests_path, book.requests_name)
     try:
         _read_pair_sheet(requests_book, 'Requests', book, 'request')
         _read_pair_sheet(requests_book, 'Antirequests', book, 'antirequest')
     finally:
         requests_book.close()
 
-    book.finish()
-    book.report()
+    return book
 
+
+def save_guest_pickle(book):
     with open('guest_data.p', 'wb') as handle:
         pickle.dump((book.guests, book.anti, book.emails, book.polls), handle)
-    return book.guests, book.anti, book.extra, book.emails, book.polls
 
 
 def formatNameWithoutFamilyName(guest):

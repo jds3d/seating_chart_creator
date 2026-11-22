@@ -13,10 +13,11 @@ TABS INCLUDE:
    Row 1 is the header. One pair per row. Names should match the attendee names in the export.
 2) Download a new collection summary from Cheddar Up. Leave that file as-is. Do not rename its tabs.
 3) Execute "Seating Chart Creator.py".
-    a) F5 or the Green/Black Play Button (sideways triangle flag).
-    b) Choose the new Cheddar Up export when the file window opens. Guest names are read from the 5th and 6th tabs only.
-    c) If you have to redo it, right click on the right pane (Console) and click Quit.
-4) If necessary, execute "Create Table Rosters From Seating Chart.py" which uses the output from step 3.
+    a) F5 or the Green/Black Play Button (sideways triangle flag). A window opens.
+    b) Choose the new Cheddar Up export. Guest names are read from the 5th and 6th tabs only.
+    c) Click "Create seating chart". If a group is larger than the limit, the window asks before seating them together. Then set the table numbers and the files are written to the output folder.
+    d) Close the window when you are done. To start over, run the script again.
+4) To rebuild table rosters from a seating chart you edited, use "Rosters from a seating chart" in that same window. It uses the guest details saved the last time a chart was created.
 
 The old Punchbowl template is `punchbowl_Seating Chart Creator - Template.xls`.
 

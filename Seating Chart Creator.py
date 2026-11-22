@@ -4,12 +4,9 @@ Created on Sat Nov 17 10:07:26 2018
 
 @author: jds3d
 """
-import datetime
 import pprint
 import random
 import sys
-
-from utils import writeTables, writeSeatingChart, readGuestList
 
 ###### CONSTANTS ####################
 ###### You can edit these. ##########
@@ -50,8 +47,14 @@ def _tables_conflict(left, right, antiRequests):
     return False
 
 
-def _merge_tables_that_fit(tables, antiRequests):
+class SeatingCancelled(Exception):
+    """The user stopped seating instead of accepting a large group."""
+
+
+def _merge_tables_that_fit(tables, antiRequests, table_size=None):
     """Join leftover tables when the combined group still fits and nobody asked to be separated."""
+    if table_size is None:
+        table_size = normalTableMaxSize
     tables = [table for table in tables if table]
     merged = True
     while merged:
@@ -59,7 +62,7 @@ def _merge_tables_that_fit(tables, antiRequests):
         tables.sort(key=len)
         for i in range(len(tables)):
             for j in range(i + 1, len(tables)):
-                if len(tables[i]) + len(tables[j]) > normalTableMaxSize:
+                if len(tables[i]) + len(tables[j]) > table_size:
                     continue
                 if _tables_conflict(tables[i], tables[j], antiRequests):
                     continue
@@ -77,7 +80,11 @@ def _merge_tables_that_fit(tables, antiRequests):
 # first find largest groups and assign them to first table with enough space
 # singles (people with no seating requests) are seated together in their own tables
 # then small leftover tables are combined when they still fit
-def generateSeatingChart(guests, antiRequests):
+def generateSeatingChart(guests, antiRequests, confirm_large_group=None, table_size=None, group_limit=None):
+    if table_size is None:
+        table_size = normalTableMaxSize
+    if group_limit is None:
+        group_limit = singleGroupMaxSize
     print('generating seating chart...')
     tables = [set()]  # initialize tables as a list of sets
     guestsSeated = set()
@@ -105,22 +112,27 @@ def generateSeatingChart(guests, antiRequests):
         group = guests[k]
         numInGroup = len(group)
 
-        if numInGroup > singleGroupMaxSize:
-            print('Group has {} people, larger than max of {}'.format(numInGroup, singleGroupMaxSize))
+        if numInGroup > group_limit:
+            print('Group has {} people, larger than max of {}'.format(numInGroup, group_limit))
 
             # ask user if it's ok.
             pprint.pprint(group)
-            proceed = input("Do you want to allow it? Blank is no, anything else means yes: ")
+            if confirm_large_group is None:
+                proceed = input("Do you want to allow it? Blank is no, anything else means yes: ")
+            else:
+                proceed = confirm_large_group(group, numInGroup, group_limit)
             if not proceed:
-                print('Exiting so you can fix the configuration.')
-                sys.exit(1)
+                print('Stopped so you can fix the configuration.')
+                if confirm_large_group is None:
+                    sys.exit(1)
+                raise SeatingCancelled('Stopped so you can fix the configuration.')
 
         # seat group
         groupAdded = False
         for table in tables:
             doNotSitHere = False
             # if there is space at the table:
-            if normalTableMaxSize - len(table) - numInGroup >= 0:
+            if table_size - len(table) - numInGroup >= 0:
                 # if the people all want to sit together:
                 if len(table) > 0:
                     for p1 in group:
@@ -158,7 +170,7 @@ def generateSeatingChart(guests, antiRequests):
 
         # try to add to an existing singles-only table with space
         for table in tables:
-            if len(table) >= normalTableMaxSize:
+            if len(table) >= table_size:
                 continue
             # only add to tables that have only singles (or are empty)
             if any(len(guests[p]) > 1 for p in table):
@@ -187,7 +199,7 @@ def generateSeatingChart(guests, antiRequests):
 
         random.shuffle(tables)
 
-    return _merge_tables_that_fit(tables, antiRequests)
+    return _merge_tables_that_fit(tables, antiRequests, table_size)
 
 
 def editTableNumbers(tables):
@@ -228,16 +240,5 @@ def editTableNumbers(tables):
 
 # ask what number it should be.  show all numbers that are left.  enter will not change it.
 if __name__ == "__main__":
-    print("reading guest list...")
-    export_path = sys.argv[1] if len(sys.argv) > 1 else None
-    guests, antiRequests, extraGuestData, emails, polls = readGuestList(export_path)
-    print("generating seating chart...")
-    tables = generateSeatingChart(guests, antiRequests)
-    print("editing table numbers...")
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    tables = editTableNumbers(tables)
-    print("writing seating chart...")
-    writeSeatingChart(tables, extraGuestData, timestamp)
-    print("writing tables...")
-    writeTables(tables, emails, polls, timestamp, writeEmails=True)
-    writeTables(tables, emails, polls, timestamp, writeEmails=False, extraColumn=extraGuestData)
+    from gui import main
+    main(creator=sys.modules[__name__])

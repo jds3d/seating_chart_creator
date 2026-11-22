@@ -5,13 +5,10 @@ Created on Sat Feb  9 12:13:07 2019
 @author: Josh
 """
   
-import datetime
 import sys
 import tkinter
 from tkinter.filedialog import askopenfilename
-import pickle
 from openpyxl import load_workbook
-from utils import writeTables
 
 
 def formatNameWithoutFamilyName(guest):
@@ -21,30 +18,31 @@ def formatNameWithoutFamilyName(guest):
 
 
 ## read guest data from pickle, but read seating chart from excel because it might be changed manually
-def readSeatingChart():
-    # Make a top-level instance and hide since it is ugly and big.
-    root = tkinter.Tk()
-    root.withdraw()
-
-    # Make it almost invisible - no decorations, 0 size, top left corner.
-    root.overrideredirect(True)
-    root.geometry('0x0+0+0')
-
-    # Show window again and lift it to top so it can get focus,
-    # otherwise dialogs will end up behind the terminal.
-    root.deiconify()
-    root.lift()
-    root.focus_force()
-
-    file_path = askopenfilename(
-        parent=root,
-        title='Select a seating chart',
-        filetypes=[('Excel workbook', '*.xlsx'), ('All files', '*.*')],
-    )
-    root.destroy()
+def readSeatingChart(file_path=None):
     if not file_path:
-        print('No seating chart selected.')
-        sys.exit(1)
+        # Make a top-level instance and hide since it is ugly and big.
+        root = tkinter.Tk()
+        root.withdraw()
+
+        # Make it almost invisible - no decorations, 0 size, top left corner.
+        root.overrideredirect(True)
+        root.geometry('0x0+0+0')
+
+        # Show window again and lift it to top so it can get focus,
+        # otherwise dialogs will end up behind the terminal.
+        root.deiconify()
+        root.lift()
+        root.focus_force()
+
+        file_path = askopenfilename(
+            parent=root,
+            title='Select a seating chart',
+            filetypes=[('Excel workbook', '*.xlsx'), ('All files', '*.*')],
+        )
+        root.destroy()
+        if not file_path:
+            print('No seating chart selected.')
+            sys.exit(1)
 
     wb = load_workbook(file_path, data_only=True, read_only=True)
     try:
@@ -108,12 +106,6 @@ def ask_for_column(column_headings):
     return selected_index
 
 
-if __name__ == "__main__":    
-    timestamp=datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    with open('guest_data.p', 'rb') as f:    
-        guests, antiRequests, emails, polls = pickle.load(f)    
-
-    tables, guestChoice = readSeatingChart()
-
-    writeTables(tables, emails, polls, timestamp, writeEmails=True, extraColumn=guestChoice)
-    writeTables(tables, emails, polls, timestamp, writeEmails=False, extraColumn=guestChoice)
+if __name__ == "__main__":
+    from gui import main
+    main()

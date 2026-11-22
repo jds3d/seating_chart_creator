@@ -4,3 +4,9 @@ Seating Chart Creator.xls
 *.pyc
 /*.xlsx
 !/*[Tt]emplate*.xlsx
+.venv/
+build/
+dist/
+release/
+*.spec
+error.log
