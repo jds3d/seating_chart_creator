@@ -29,6 +29,54 @@ def _norm(value):
     return text
 
 
+def _cap_name_word(word):
+    """Capitalize a name token. Leave McDonald-style mixed case alone."""
+    letters = [character for character in word if character.isalpha()]
+    if letters and any(character.islower() for character in letters) and any(character.isupper() for character in letters):
+        return word
+    pieces = re.split(r"([-'])", word)
+    capped = []
+    for piece in pieces:
+        if piece in "-'":
+            capped.append(piece)
+        elif piece:
+            capped.append(piece[:1].upper() + piece[1:].lower())
+    return ''.join(capped)
+
+
+def _person_name(value):
+    """First letter of each first, middle, and last name. Not for meals or emails."""
+    text = _norm(value)
+    if not text:
+        return ''
+    return ' '.join(_cap_name_word(word) for word in text.split(' '))
+
+
+def _display_phrase(value):
+    """Capitalize names in written text. Notes in parentheses stay as written."""
+    text = _as_text(value)
+    if not text:
+        return ''
+    pieces = re.split(r'(\([^)]*\))', text)
+    rendered = []
+    for index, piece in enumerate(pieces):
+        if not piece:
+            continue
+        if index % 2 == 1:
+            rendered.append(piece)
+            continue
+        words = []
+        for word in piece.split(' '):
+            if not word:
+                words.append(word)
+            elif word.casefold() in {'and', 'or'}:
+                words.append(word.casefold())
+            else:
+                words.append(_cap_name_word(word))
+        rendered.append(' '.join(words))
+    return ''.join(rendered).strip()
+
+
 def _key(value):
     return _norm(value).casefold()
 
@@ -176,7 +224,7 @@ class GuestBook:
         self._similar_warned = set()
 
     def add(self, display_name, email, choice):
-        display_name = _norm(display_name)
+        display_name = _person_name(display_name)
         key = _key(display_name)
         if not key:
             return None
@@ -291,13 +339,13 @@ class GuestBook:
         whole = self.match_one(cleaned)
         if whole:
             return [{
-                'part': original,
+                'part': _display_phrase(original),
                 'guest': whole,
                 'approximate': _key(whole) != _key(cleaned),
             }]
         pieces = [part.strip() for part in re.split(r'\s+and\s+', cleaned, flags=re.IGNORECASE) if part.strip()]
         if len(pieces) <= 1:
-            return [{'part': original, 'guest': None, 'approximate': False}]
+            return [{'part': _display_phrase(original), 'guest': None, 'approximate': False}]
         explained = []
         for index, part in enumerate(pieces):
             found = self.match_one(part)
@@ -314,7 +362,7 @@ class GuestBook:
                             compared = candidate
                             break
             explained.append({
-                'part': part,
+                'part': _person_name(part),
                 'guest': found,
                 'approximate': bool(found) and _key(found) != _key(compared),
             })
@@ -425,7 +473,7 @@ class GuestBook:
         self.raw_pair_rows.append((left_text, right_text, kind))
 
     def set_email(self, name, email):
-        canonical = self.by_key.get(_key(name), _norm(name))
+        canonical = self.by_key.get(_key(name), _person_name(name))
         self.emails[formatNameWithoutFamilyName(canonical)] = _as_text(email)
 
     def set_choice(self, name, choice):
@@ -466,7 +514,7 @@ class GuestBook:
         self.real_name_keys.discard(_key(canonical))
 
     def rename_guest(self, old, new):
-        new = _norm(new)
+        new = _person_name(new)
         source = self.by_key.get(_key(old))
         if not source or not new:
             return
@@ -550,16 +598,16 @@ class GuestBook:
             print('\nSeatmate requests applied:')
             for raw, canonical, approximate in self.applied_seatmates:
                 suffix = ' (approximate)' if approximate else ''
-                print('  {!r} -> {}{}'.format(raw, canonical, suffix))
+                print('  {!r} -> {}{}'.format(_display_phrase(raw), canonical, suffix))
         if getattr(self, 'skipped_seatmates', None):
             print('\nSeatmate text ignored:')
             for raw in self.skipped_seatmates:
-                print('  {!r}'.format(raw))
+                print('  {!r}'.format(_display_phrase(raw)))
         if self.unmatched_seatmates:
             print('\nSeatmate names not on the guest list:')
             for part, party in self.unmatched_seatmates:
                 with_whom = ', '.join(party) if party else 'unknown party'
-                line = '  {!r}  (requested with {})'.format(part, with_whom)
+                line = '  {!r}  (requested with {})'.format(_display_phrase(part), with_whom)
                 suggestions = self.last_name_suggestions(part)
                 if suggestions:
                     line += '. Guests with that last name: {}'.format(', '.join(suggestions))
@@ -638,11 +686,11 @@ def _read_item_sheet(worksheet, position, book):
             continue
 
         email = _at(row, email_index)
-        payer = _norm('{} {}'.format(_as_text(_at(row, first_index)), _as_text(_at(row, last_index))))
+        payer = _person_name('{} {}'.format(_as_text(_at(row, first_index)), _as_text(_at(row, last_index))))
         named = []
         unnamed_choices = []
         for name_index, choice_index in attendee_pairs:
-            name = _norm(_at(row, name_index))
+            name = _person_name(_at(row, name_index))
             choice = _norm(_at(row, choice_index))
             if name:
                 named.append((name, choice))
@@ -858,3 +906,72 @@ def writeTables(tables, emails, polls, timestamp, writeEmails, extraColumn=None)
     print('saving table rosters...', output_filename)
     _ensure_output_dir()
     wb.save(output_filename)
+
+
+def keep_minmax(window, master=None):
+    """Give a window minimize and maximize buttons, including a dialog."""
+    window.resizable(True, True)
+    try:
+        window.attributes('-toolwindow', False)
+    except Exception:
+        pass
+    window.after(0, lambda: _force_minmax_style(window))
+    window.bind('<Map>', lambda event: _force_minmax_style(window) if event.widget is window else None, add='+')
+    if master is not None:
+        _minimize_together(window, master)
+
+
+def _force_minmax_style(window):
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        window.update_idletasks()
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(window.winfo_id()) or window.winfo_id()
+        style = user32.GetWindowLongW(hwnd, -16)
+        style |= 0x00020000 | 0x00010000 | 0x00040000 | 0x00080000 | 0x00C00000
+        user32.SetWindowLongW(hwnd, -16, style)
+        extra = user32.GetWindowLongW(hwnd, -20)
+        extra &= ~0x00000080
+        user32.SetWindowLongW(hwnd, -20, extra)
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)
+    except Exception:
+        return
+
+
+def _minimize_together(window, master):
+    """Minimizing one window minimizes the other, so a dialog cannot hide the app."""
+    import tkinter as tk
+
+    def on_dialog_unmap(event):
+        if event.widget is not window:
+            return
+        try:
+            if window.state() == 'iconic' and master.winfo_exists() and master.state() != 'iconic':
+                master.iconify()
+        except tk.TclError:
+            pass
+
+    def on_dialog_map(event):
+        if event.widget is not window:
+            return
+        try:
+            if master.winfo_exists() and master.state() == 'iconic':
+                master.deiconify()
+        except tk.TclError:
+            pass
+
+    def on_master_map(event):
+        if event.widget is not master:
+            return
+        try:
+            if window.winfo_exists() and window.state() == 'iconic':
+                window.deiconify()
+                window.lift()
+        except tk.TclError:
+            pass
+
+    window.bind('<Unmap>', on_dialog_unmap, add='+')
+    window.bind('<Map>', on_dialog_map, add='+')
+    master.bind('<Map>', on_master_map, add='+')

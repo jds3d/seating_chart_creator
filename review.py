@@ -8,27 +8,6 @@ import corrections
 import utils
 
 
-_INTROS = {
-    'missing': (
-        'These payers did not type attendee names. Enter every person who should be seated. '
-        'If a seatmate request mentions someone who is missing, add that person here first.'
-    ),
-    'names': 'These names have no last name. Enter the full name, then use it.',
-    'emails': 'Choose which email address to keep. Nothing is selected until you choose.',
-    'choices': 'Choose which meal to keep.',
-    'unclaimed': 'These meal choices were not tied to a person. Assign each one, or confirm that it stays unassigned.',
-    'duplicates': 'Say whether each pair is two people or the same person.',
-    'seatmates': (
-        'Each box is one thing somebody wrote. A guess is filled in when a guest was found. '
-        'A line that says "not on the guest list" was missed, the way "Joe Boyer and Eileen Mullin" can keep Eileen and drop Joe. '
-        'Choose the right guest for every person, or mark that person not attending, then click This is correct. '
-        'Add a missing person under No attendee names first if they are not in the list. '
-        'A match that already looks exact can be changed with Change.'
-    ),
-    'pairs': 'These rows are from the requests workbook. Choose the guests on each side, or skip the row.',
-}
-
-
 class ReviewDialog(tk.Toplevel):
     def __init__(self, master, book, path):
         super().__init__(master)
@@ -37,7 +16,9 @@ class ReviewDialog(tk.Toplevel):
         self.path = path
         self.accepted = False
         self._pull = lambda: None
-        self._section = None
+        self._current = None
+        self._nav_lock = False
+        self._iid_info = {}
         try:
             self.loaded = corrections.load_corrections(path)
         except PermissionError:
@@ -47,18 +28,33 @@ class ReviewDialog(tk.Toplevel):
         self.geometry('1040x700')
         self.columnconfigure(1, weight=1)
         self.rowconfigure(1, weight=1)
-        self.transient(master)
         self.protocol('WM_DELETE_WINDOW', self._cancel)
 
         ttk.Label(
             self,
             wraplength=980,
-            text='Nothing is seated until these are settled. Confirmed decisions are saved in Corrections.xlsx, which you can also edit in Excel.',
+            text=(
+                'One warning is shown at a time. '
+                'These people are correct, or Skip for now, moves to the next one. '
+                'Confirmed answers are saved in Corrections.xlsx, which you can also edit in Excel.'
+            ),
         ).grid(row=0, column=0, columnspan=2, sticky='ew', padx=16, pady=(16, 8))
 
-        self.section_list = tk.Listbox(self, width=32, exportselection=False, activestyle='none', font=('Segoe UI', 10))
-        self.section_list.grid(row=1, column=0, sticky='ns', padx=(16, 8), pady=8)
-        self.section_list.bind('<<ListboxSelect>>', self._on_select)
+        side = ttk.Frame(self)
+        side.grid(row=1, column=0, sticky='ns', padx=(16, 8), pady=8)
+        side.rowconfigure(0, weight=1)
+        style = ttk.Style(self)
+        style.configure('Review.Treeview', font=('Segoe UI', 10), rowheight=26)
+        self.tree = ttk.Treeview(side, show='tree', selectmode='browse', style='Review.Treeview')
+        self.tree.column('#0', width=340, minwidth=240, stretch=False)
+        self.tree.tag_configure('pending', foreground='#8a4b08')
+        self.tree.tag_configure('done', foreground='#1b7f3a')
+        self.tree.tag_configure('group', font=('Segoe UI', 10, 'bold'))
+        tree_scroll = ttk.Scrollbar(side, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.grid(row=0, column=0, sticky='ns')
+        tree_scroll.grid(row=0, column=1, sticky='ns')
+        self.tree.bind('<<TreeviewSelect>>', self._on_select)
 
         holder = ttk.Frame(self)
         holder.grid(row=1, column=1, sticky='nsew', padx=(0, 16), pady=8)
@@ -78,11 +74,13 @@ class ReviewDialog(tk.Toplevel):
         buttons = ttk.Frame(self)
         buttons.grid(row=2, column=0, columnspan=2, sticky='e', padx=16, pady=(0, 16))
         ttk.Button(buttons, text='Cancel', command=self._cancel).pack(side=tk.RIGHT)
-        ttk.Button(buttons, text='Save corrections', command=self._save_only).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(buttons, text='Save All', command=self._save_only).pack(side=tk.RIGHT, padx=(0, 8))
         ttk.Button(buttons, text='Continue', command=self._continue).pack(side=tk.RIGHT, padx=(0, 8))
 
-        self._refresh_list()
-        self._select_first()
+        first = self._first_pending() or self._first_item()
+        if first:
+            self._show_node(first, pull=False)
+        utils.keep_minmax(self, master)
 
     def ask(self):
         if self.loaded is None:
@@ -101,64 +99,208 @@ class ReviewDialog(tk.Toplevel):
         self.wait_window()
         return self.accepted
 
-    def _refresh_list(self):
-        current = self._section
-        self.section_list.delete(0, tk.END)
-        self._keys = []
-        for key, title, pending in corrections.section_defs(self.state):
-            label = title if pending == 0 else '{} ({})'.format(title, pending)
-            self.section_list.insert(tk.END, label)
-            if pending:
-                self.section_list.itemconfig(tk.END, foreground='#8a4b08')
-            self._keys.append(key)
-        if current in self._keys:
-            self.section_list.selection_set(self._keys.index(current))
+    def _all_items(self):
+        items = []
+        for section, _title, _pending in corrections.section_defs(self.state):
+            items.extend(self._section_items(section))
+        return items
 
-    def _select_first(self):
-        pending = [index for index, key in enumerate(self._keys) if corrections.section_defs(self.state)[index][2]]
-        index = pending[0] if pending else 0
-        if not self._keys:
-            return
-        self.section_list.selection_clear(0, tk.END)
-        self.section_list.selection_set(index)
-        self.section_list.activate(index)
-        self._show(self._keys[index], pull=False)
+    def _section_items(self, section):
+        rows = self.state[section]
+        items = []
+        if section == 'missing':
+            for key, item in rows.items():
+                items.append(self._node(section, key, item['payer'], not item['decided']))
+        elif section == 'names':
+            for key, item in rows.items():
+                items.append(self._node(section, key, item['written'], not item['decided']))
+        elif section in ('emails', 'choices'):
+            for key, item in rows.items():
+                items.append(self._node(section, key, item['guest'], not item['decided']))
+        elif section == 'unclaimed':
+            for key, item in rows.items():
+                for index, row in enumerate(item['rows']):
+                    label = '{} — {}'.format(item['payer'], row['choice'] or 'meal')
+                    items.append(self._node(section, key, label, not row['decided'], row=index))
+        elif section == 'duplicates':
+            for key, item in rows.items():
+                left, right = item['pair']
+                items.append(self._node(section, key, '{} and {}'.format(left, right), not item['decided']))
+        elif section == 'seatmates':
+            for key, item in rows.items():
+                items.append(self._node(section, key, _short(utils._display_phrase(item['raw'])), not item['decided']))
+        elif section == 'pairs':
+            for key, item in rows.items():
+                kind = 'Sit together' if item['kind'] == 'request' else 'Keep apart'
+                label = '{}: {} / {}'.format(
+                    kind,
+                    _short(utils._display_phrase(item['left']), 24),
+                    _short(utils._display_phrase(item['right']), 24),
+                )
+                items.append(self._node(section, key, label, not item['decided']))
+        return items
+
+    def _node(self, section, key, label, pending, row=None):
+        return {
+            'kind': 'item',
+            'section': section,
+            'key': key,
+            'row': row,
+            'label': label,
+            'pending': pending,
+            'id': (section, key, row),
+        }
+
+    def _first_item(self):
+        items = self._all_items()
+        return items[0] if items else None
+
+    def _first_pending(self):
+        for item in self._all_items():
+            if item['pending']:
+                return item
+        return None
+
+    def _current_node(self):
+        for item in self._all_items():
+            if item['id'] == self._current:
+                return item
+        return None
+
+    def _first_matching(self, section=None, pending=None):
+        for item in self._all_items():
+            if section is not None and item['section'] != section:
+                continue
+            if pending is not None and item['pending'] != pending:
+                continue
+            return item
+        return None
+
+    def _refresh_tree(self):
+        self._nav_lock = True
+        try:
+            self.tree.delete(*self.tree.get_children())
+            self._iid_info = {}
+            selected = None
+            groups = (
+                ('Needs an answer', True, 'pending'),
+                ('Confirmed', False, 'done'),
+            )
+            for group_title, want_pending, tag in groups:
+                blocks = []
+                for section, title, _pending in corrections.section_defs(self.state):
+                    children = [child for child in self._section_items(section) if child['pending'] is want_pending]
+                    if children:
+                        blocks.append((section, title, children))
+                if not blocks:
+                    continue
+                total = sum(len(children) for _section, _title, children in blocks)
+                group_iid = self.tree.insert(
+                    '', 'end', text='{} ({})'.format(group_title, total), open=True, tags=('group', tag),
+                )
+                self._iid_info[group_iid] = {'kind': 'group', 'pending': want_pending}
+                for section, title, children in blocks:
+                    parent = self.tree.insert(
+                        group_iid, 'end', text='{} ({})'.format(title, len(children)), open=True, tags=(tag,),
+                    )
+                    self._iid_info[parent] = {'kind': 'section', 'section': section, 'pending': want_pending}
+                    for child in children:
+                        iid = self.tree.insert(parent, 'end', text=child['label'], tags=(tag,))
+                        self._iid_info[iid] = child
+                        if child['id'] == self._current:
+                            selected = iid
+            if selected:
+                self.tree.selection_set(selected)
+                self.tree.focus(selected)
+                self.tree.see(selected)
+        finally:
+            self._nav_lock = False
 
     def _on_select(self, _event):
-        selection = self.section_list.curselection()
-        if not selection:
+        if self._nav_lock:
             return
-        key = self._keys[selection[0]]
-        if key != self._section:
-            self._show(key, pull=True)
+        iid = self.tree.focus()
+        info = self._iid_info.get(iid)
+        if not info:
+            return
+        if info['kind'] == 'group':
+            target = self._first_matching(pending=info['pending'])
+        elif info['kind'] == 'section':
+            target = self._first_matching(section=info['section'], pending=info['pending'])
+        elif info['id'] == self._current:
+            return
+        else:
+            self._show_node(info, pull=True)
+            return
+        if target and target['id'] != self._current:
+            self._show_node(target, pull=True)
 
-    def _show(self, key, pull):
+    def _show_node(self, node, pull):
+        if not node:
+            return
         if pull:
             self._pull()
-        if key == 'seatmates':
+        if node['section'] == 'seatmates':
             corrections.refresh_open_seatmates(self.book, self.state)
-        self._section = key
+        self._current = node['id']
         for child in self.body.winfo_children():
             child.destroy()
-        intro = ttk.Label(self.body, text=_INTROS[key], wraplength=680)
-        intro.pack(fill=tk.X, padx=8, pady=(4, 12))
+        item = self.state[node['section']][node['key']]
         builders = {
             'missing': self._build_missing,
             'names': self._build_names,
             'emails': self._build_emails,
             'choices': self._build_choices,
-            'unclaimed': self._build_unclaimed,
             'duplicates': self._build_duplicates,
             'seatmates': self._build_seatmates,
             'pairs': self._build_pairs,
         }
-        self._pull = builders[key]()
+        if node['section'] == 'unclaimed':
+            self._pull = self._build_unclaimed(item, item['rows'][node['row']])
+        else:
+            self._pull = builders[node['section']](item)
         self.canvas.yview_moveto(0)
-        self._refresh_list()
+        self._refresh_tree()
+
+    def _go_next(self):
+        items = self._all_items()
+        if not items:
+            return
+        index = 0
+        for position, item in enumerate(items):
+            if item['id'] == self._current:
+                index = position
+                break
+        for item in items[index + 1:] + items[:index]:
+            if item['pending']:
+                self._show_node(item, pull=False)
+                return
+        current = self._current_node()
+        if current:
+            self._show_node(current, pull=False)
+
+    def _skip(self):
+        self._pull()
+        self._go_next()
+
+    def _actions(self, parent, confirm_text, confirm_command):
+        row = ttk.Frame(parent)
+        row.pack(anchor='w', pady=(12, 0))
+        ttk.Button(row, text=confirm_text, command=confirm_command).pack(side=tk.LEFT)
+        ttk.Button(row, text='Skip for now', command=self._skip).pack(side=tk.LEFT, padx=(8, 0))
+
+    def _explain(self, parent, text):
+        label = ttk.Label(parent, text=text, justify='left', wraplength=640)
+        label.pack(anchor='w', fill=tk.X, pady=(6, 8))
+
+        def fit(event, widget=label):
+            widget.configure(wraplength=max(event.width - 8, 280))
+
+        parent.bind('<Configure>', fit, add='+')
 
     def _card(self, needs_answer):
-        card = ttk.Frame(self.body, padding=10)
-        card.pack(fill=tk.X, padx=8, pady=6)
+        card = ttk.Frame(self.body, padding=12)
+        card.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         banner = ttk.Label(card, text='Needs an answer' if needs_answer else 'Confirmed')
         banner.pack(anchor='w')
         if needs_answer:
@@ -167,250 +309,277 @@ class ReviewDialog(tk.Toplevel):
             banner.configure(foreground='#1b7f3a')
         return card
 
-    def _build_missing(self):
-        pulls = []
-        for item in self.state['missing'].values():
-            card = self._card(not item['decided'])
-            ttk.Label(card, text=item['payer'], font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-            if item['email']:
-                ttk.Label(card, text='Email on the payment: {}'.format(item['email'])).pack(anchor='w')
-            rows = ttk.Frame(card)
-            rows.pack(fill=tk.X, pady=(8, 0))
-            editors = []
+    def _build_missing(self, item):
+        card = self._card(not item['decided'])
+        ttk.Label(card, text='Who is attending?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        choices = [choice for choice in item['choices'] if choice]
+        if len(choices) == 1:
+            meal_sentence = 'A meal was ordered without a name: {}.'.format(choices[0])
+        elif choices:
+            meal_sentence = 'Meals were ordered without a name: {}.'.format(', '.join(choices))
+        else:
+            meal_sentence = 'No meal was listed either.'
+        self._explain(
+            card,
+            'Cheddar Up has no attendee names on this payment. {} '
+            'The name already in the box is only a guess: it is the person who paid, not a name from the form. '
+            'Change it if someone else is coming. Add a row for each other person, and choose that person\'s meal.'.format(meal_sentence),
+        )
+        ttk.Label(card, text='Payer: {}'.format(item['payer'])).pack(anchor='w')
+        if item['email']:
+            ttk.Label(card, text='Email on the payment: {}'.format(item['email'])).pack(anchor='w')
 
-            def add_row(person, parent=rows, store=editors, choices=item['choices']):
-                line = ttk.Frame(parent)
-                line.pack(fill=tk.X, pady=2)
-                name = tk.StringVar(value=person.get('name', ''))
-                choice = tk.StringVar(value=person.get('choice', ''))
-                ttk.Entry(line, textvariable=name, width=32).pack(side=tk.LEFT)
-                box = ttk.Combobox(line, textvariable=choice, values=choices, width=18)
-                box.pack(side=tk.LEFT, padx=8)
-                ttk.Button(line, text='Remove', command=lambda target=line, saved=store: remove_row(target, saved)).pack(side=tk.LEFT)
-                store.append((line, name, choice))
+        rows = ttk.Frame(card)
+        rows.pack(fill=tk.X, pady=(10, 0))
+        headers = ttk.Frame(rows)
+        headers.pack(fill=tk.X)
+        ttk.Label(headers, text='Who is coming', width=32).pack(side=tk.LEFT)
+        ttk.Label(headers, text='Meal').pack(side=tk.LEFT, padx=8)
+        editors = []
 
-            def remove_row(line, store):
-                if len(store) == 1:
-                    return
-                store[:] = [row for row in store if row[0] is not line]
-                line.destroy()
+        def add_row(person, parent=rows, store=editors, choices=item['choices']):
+            line = ttk.Frame(parent)
+            line.pack(fill=tk.X, pady=2)
+            name = tk.StringVar(value=person.get('name', ''))
+            choice = tk.StringVar(value=person.get('choice', ''))
+            ttk.Entry(line, textvariable=name, width=32).pack(side=tk.LEFT)
+            box = ttk.Combobox(line, textvariable=choice, values=choices, width=18)
+            box.pack(side=tk.LEFT, padx=8)
+            ttk.Button(line, text='Remove', command=lambda target=line, saved=store: remove_row(target, saved)).pack(side=tk.LEFT)
+            store.append((line, name, choice))
 
-            for person in item['people']:
-                add_row(person)
-            ttk.Button(card, text='Add a person', command=lambda add=add_row: add({'name': '', 'choice': ''})).pack(anchor='w', pady=(6, 0))
+        def remove_row(line, store):
+            if len(store) == 1:
+                return
+            store[:] = [row for row in store if row[0] is not line]
+            line.destroy()
 
-            def confirm(target=item, store=editors):
-                people = [{'name': name.get().strip(), 'choice': choice.get().strip()} for _line, name, choice in store]
-                if not people or any(not person['name'] for person in people):
-                    messagebox.showerror('Attendees', 'Enter a name on every row.', parent=self)
-                    return
-                target['people'] = people
-                target['decided'] = True
-                self._show('missing', pull=False)
+        for person in item['people']:
+            add_row(person)
+        ttk.Button(card, text='Add a person', command=lambda add=add_row: add({'name': '', 'choice': ''})).pack(anchor='w', pady=(6, 0))
 
-            ttk.Button(card, text='These people are correct', command=confirm).pack(anchor='w', pady=(8, 0))
+        def confirm(target=item, store=editors):
+            people = [{'name': utils._person_name(name.get()), 'choice': choice.get().strip()} for _line, name, choice in store]
+            if not people or any(not person['name'] for person in people):
+                messagebox.showerror('Attendees', 'Enter a name on every row.', parent=self)
+                return
+            target['people'] = people
+            target['decided'] = True
+            self._go_next()
 
-            def pull(target=item, store=editors):
-                target['people'] = [{'name': name.get().strip(), 'choice': choice.get().strip()} for _line, name, choice in store]
+        self._actions(card, 'These people are correct', confirm)
 
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
+        def pull(target=item, store=editors):
+            target['people'] = [{'name': utils._person_name(name.get()), 'choice': choice.get().strip()} for _line, name, choice in store]
 
-    def _build_names(self):
-        pulls = []
-        for item in self.state['names'].values():
-            card = self._card(not item['decided'])
-            ttk.Label(
-                card,
-                text='"{}" was entered on {}\'s purchase without a last name.'.format(item['written'], item['payer']),
-                wraplength=640,
-            ).pack(anchor='w')
-            name = tk.StringVar(value=item.get('name', ''))
-            ttk.Entry(card, textvariable=name, width=36).pack(anchor='w', pady=(8, 0))
+        return pull
 
-            def confirm(target=item, var=name):
-                full = var.get().strip()
-                if ' ' not in full:
-                    messagebox.showerror('Name', 'Enter a first and last name.', parent=self)
-                    return
-                target['name'] = full
-                target['decided'] = True
-                self._show('names', pull=False)
+    def _build_names(self, item):
+        card = self._card(not item['decided'])
+        ttk.Label(card, text='What is the full name?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        self._explain(
+            card,
+            '"{}" was entered on {}\'s purchase without a last name. Enter the first and last name to use.'.format(
+                item['written'], item['payer']),
+        )
+        name = tk.StringVar(value=item.get('name', ''))
+        ttk.Entry(card, textvariable=name, width=36).pack(anchor='w')
 
-            ttk.Button(card, text='Use this name', command=confirm).pack(anchor='w', pady=(8, 0))
+        def confirm(target=item, var=name):
+            full = utils._person_name(var.get())
+            if ' ' not in full:
+                messagebox.showerror('Name', 'Enter a first and last name.', parent=self)
+                return
+            target['name'] = full
+            target['decided'] = True
+            self._go_next()
 
-            def pull(target=item, var=name):
-                target['name'] = var.get().strip()
+        self._actions(card, 'Use this name', confirm)
 
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
+        def pull(target=item, var=name):
+            target['name'] = utils._person_name(var.get())
 
-    def _build_emails(self):
-        return self._build_either(self.state['emails'], 'email', 'Choose this email')
+        return pull
 
-    def _build_choices(self):
-        return self._build_either(self.state['choices'], 'choice', 'Choose this meal')
+    def _build_emails(self, item):
+        return self._build_either(
+            item,
+            'email',
+            'Choose this email',
+            'Which email should we keep?',
+            '{} has two email addresses. Choose the one to keep.'.format(item['guest']),
+        )
 
-    def _build_either(self, items, field, button_text):
-        pulls = []
-        for item in items.values():
-            card = self._card(not item['decided'])
-            ttk.Label(card, text=item['guest'], font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-            chosen = tk.StringVar(value=item.get(field, '') if item['decided'] else '')
-            ttk.Radiobutton(card, text=item['first'], value=item['first'], variable=chosen).pack(anchor='w', pady=(6, 0))
-            ttk.Radiobutton(card, text=item['second'], value=item['second'], variable=chosen).pack(anchor='w')
+    def _build_choices(self, item):
+        return self._build_either(
+            item,
+            'choice',
+            'Choose this meal',
+            'Which meal should we keep?',
+            '{} has two meal choices. Choose the one to keep.'.format(item['guest']),
+        )
 
-            def confirm(target=item, var=chosen):
-                if not var.get():
-                    messagebox.showerror('Choose one', 'Select one of the two values.', parent=self)
-                    return
+    def _build_either(self, item, field, button_text, title, explanation):
+        card = self._card(not item['decided'])
+        ttk.Label(card, text=title, font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        self._explain(card, explanation)
+        ttk.Label(card, text=item['guest'], font=('Segoe UI', 11, 'bold')).pack(anchor='w')
+        chosen = tk.StringVar(value=item.get(field, '') if item['decided'] else '')
+        ttk.Radiobutton(card, text=item['first'], value=item['first'], variable=chosen).pack(anchor='w', pady=(6, 0))
+        ttk.Radiobutton(card, text=item['second'], value=item['second'], variable=chosen).pack(anchor='w')
+
+        def confirm(target=item, var=chosen):
+            if not var.get():
+                messagebox.showerror('Choose one', 'Select one of the two values.', parent=self)
+                return
+            target[field] = var.get()
+            target['decided'] = True
+            self._go_next()
+
+        self._actions(card, button_text, confirm)
+
+        def pull(target=item, var=chosen):
+            if var.get():
                 target[field] = var.get()
-                target['decided'] = True
-                self._show(self._section, pull=False)
 
-            ttk.Button(card, text=button_text, command=confirm).pack(anchor='w', pady=(8, 0))
+        return pull
 
-            def pull(target=item, var=chosen):
-                if var.get():
-                    target[field] = var.get()
-
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
-
-    def _build_unclaimed(self):
-        pulls = []
+    def _build_unclaimed(self, item, row):
+        card = self._card(not row['decided'])
+        ttk.Label(card, text='Who is this meal for?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        self._explain(
+            card,
+            '{} ordered {}, and Cheddar Up did not put a name on that meal. '
+            'Choose the guest it belongs to. Leave the box blank if it should stay unassigned.'.format(
+                item['payer'], row['choice'] or 'a meal'),
+        )
         names = corrections.preview_names(self.book, self.state)
-        for item in self.state['unclaimed'].values():
-            pending = any(not row['decided'] for row in item['rows'])
-            card = self._card(pending)
-            ttk.Label(card, text=item['payer'], font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-            editors = []
-            for row in item['rows']:
-                line = ttk.Frame(card)
-                line.pack(fill=tk.X, pady=3)
-                ttk.Label(line, text=row['choice'], width=18).pack(side=tk.LEFT)
-                guest = tk.StringVar(value=row.get('guest', ''))
-                ttk.Combobox(line, textvariable=guest, values=[''] + names, width=28).pack(side=tk.LEFT, padx=8)
-                editors.append((row, guest))
+        guest = tk.StringVar(value=row.get('guest', ''))
+        ttk.Combobox(card, textvariable=guest, values=[''] + names, width=36).pack(anchor='w')
 
-            def confirm(store=editors):
-                for row, guest in store:
-                    row['guest'] = self._known_name(guest.get())
-                    row['decided'] = True
-                self._show('unclaimed', pull=False)
+        def confirm(target=row, var=guest):
+            text = var.get().strip()
+            if text and not self._known_name(text):
+                messagebox.showerror(
+                    'Meal',
+                    '"{}" is not on the guest list. Add that person under No attendee names, or leave the meal unassigned.'.format(text),
+                    parent=self,
+                )
+                return
+            target['guest'] = self._known_name(text)
+            target['decided'] = True
+            self._go_next()
 
-            ttk.Button(card, text='Use these assignments', command=confirm).pack(anchor='w', pady=(8, 0))
-            ttk.Label(card, text='Leave a choice blank to keep it unassigned.').pack(anchor='w')
+        self._actions(card, 'Use this assignment', confirm)
 
-            def pull(store=editors):
-                for row, guest in store:
-                    row['guest'] = guest.get().strip()
+        def pull(target=row, var=guest):
+            target['guest'] = var.get().strip()
 
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
+        return pull
 
-    def _build_duplicates(self):
-        pulls = []
-        for item in self.state['duplicates'].values():
-            left, right = item['pair']
-            card = self._card(not item['decided'])
-            ttk.Label(card, text='{} and {}'.format(left, right), font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-            choice = tk.StringVar(value='same' if item.get('decided') and item.get('same_as') else ('separate' if item.get('decided') else ''))
-            keep = tk.StringVar(value=item.get('same_as') or left)
-            ttk.Radiobutton(card, text='Keep them as two people', value='separate', variable=choice).pack(anchor='w', pady=(6, 0))
-            ttk.Radiobutton(card, text='They are the same person', value='same', variable=choice).pack(anchor='w')
-            ttk.Combobox(card, textvariable=keep, values=[left, right], width=32, state='readonly').pack(anchor='w', padx=(18, 0))
+    def _build_duplicates(self, item):
+        left, right = item['pair']
+        card = self._card(not item['decided'])
+        ttk.Label(card, text='Are these the same person?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        self._explain(card, '{} and {} look alike. Say whether to keep both, or which name to keep.'.format(left, right))
+        choice = tk.StringVar(value='same' if item.get('decided') and item.get('same_as') else ('separate' if item.get('decided') else ''))
+        keep = tk.StringVar(value=item.get('same_as') or left)
+        ttk.Radiobutton(card, text='Keep them as two people', value='separate', variable=choice).pack(anchor='w', pady=(6, 0))
+        ttk.Radiobutton(card, text='They are the same person', value='same', variable=choice).pack(anchor='w')
+        ttk.Label(card, text='Name to keep').pack(anchor='w', pady=(6, 0))
+        ttk.Combobox(card, textvariable=keep, values=[left, right], width=32, state='readonly').pack(anchor='w')
 
-            def confirm(target=item, which=choice, kept=keep):
-                if which.get() not in ('separate', 'same'):
-                    messagebox.showerror('Duplicates', 'Choose whether they are the same person.', parent=self)
-                    return
-                target['decided'] = True
-                target['same_as'] = kept.get() if which.get() == 'same' else ''
-                self._show('duplicates', pull=False)
+        def confirm(target=item, which=choice, kept=keep):
+            if which.get() not in ('separate', 'same'):
+                messagebox.showerror('Duplicates', 'Choose whether they are the same person.', parent=self)
+                return
+            target['decided'] = True
+            target['same_as'] = kept.get() if which.get() == 'same' else ''
+            self._go_next()
 
-            ttk.Button(card, text='Use this answer', command=confirm).pack(anchor='w', pady=(8, 0))
+        self._actions(card, 'Use this answer', confirm)
 
-            def pull(target=item, which=choice, kept=keep):
-                if which.get() == 'same':
-                    target['same_as'] = kept.get()
-                elif which.get() == 'separate':
-                    target['same_as'] = ''
+        def pull(target=item, which=choice, kept=keep):
+            if which.get() == 'same':
+                target['same_as'] = kept.get()
+            elif which.get() == 'separate':
+                target['same_as'] = ''
 
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
+        return pull
 
-    def _build_seatmates(self):
-        pulls = []
+    def _build_seatmates(self, item):
+        card = self._card(not item['decided'])
+        ttk.Label(card, text='Who should sit together?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        ttk.Label(card, text='"{}"'.format(utils._display_phrase(item['raw'])), font=('Segoe UI', 11, 'bold'), wraplength=640).pack(anchor='w', pady=(6, 0))
+        if item['asked_by']:
+            ttk.Label(card, text='Written on the purchase for {}'.format(', '.join(item['asked_by'])), wraplength=640).pack(anchor='w')
+        if item['decided']:
+            if item['skip']:
+                ttk.Label(card, text='This is not a seating request.', wraplength=640).pack(anchor='w', pady=(8, 0))
+            else:
+                ttk.Label(card, text='Sits with {}'.format(', '.join(item['sit_with'])), wraplength=640).pack(anchor='w', pady=(8, 0))
+
+            def change(target=item):
+                self._open_seatmate(target)
+                self._show_node(self._current_node(), pull=False)
+
+            ttk.Button(card, text='Change', command=change).pack(anchor='w', pady=(8, 0))
+            ttk.Button(card, text='Skip for now', command=self._skip).pack(anchor='w', pady=(4, 0))
+            return lambda: None
+
+        self._explain(
+            card,
+            'Choose a guest for each person named here, or mark that person not attending. '
+            'If the name is not in the list, add that person under No attendee names first.',
+        )
+        skip = tk.BooleanVar(value=item.get('skip', False))
+        ttk.Checkbutton(card, text='This is not a seating request', variable=skip).pack(anchor='w', pady=(4, 0))
         names = corrections.preview_names(self.book, self.state)
-        ordered = sorted(self.state['seatmates'].values(), key=lambda item: (item['decided'], item['raw'].casefold()))
-        for item in ordered:
-            card = self._card(not item['decided'])
-            ttk.Label(card, text='"{}"'.format(item['raw']), font=('Segoe UI', 11, 'bold'), wraplength=640).pack(anchor='w')
-            if item['asked_by']:
-                ttk.Label(card, text='Asked by {}'.format(', '.join(item['asked_by'])), wraplength=640).pack(anchor='w')
-            if item['decided']:
-                if item['skip']:
-                    ttk.Label(card, text='Not a seating request.').pack(anchor='w', pady=(6, 0))
-                else:
-                    ttk.Label(card, text='Sits with {}'.format(', '.join(item['sit_with'])), wraplength=640).pack(anchor='w', pady=(6, 0))
+        editors = []
+        for part in item['parts']:
+            line = ttk.Frame(card)
+            line.pack(fill=tk.X, pady=3)
+            label = part['part'] or 'Also sit with'
+            note = ''
+            if part.get('approximate'):
+                note = ' (spelling differs)'
+            elif not part.get('guest') and not part.get('added'):
+                note = ' (not on the guest list)'
+            ttk.Label(line, text=label + note, wraplength=220, width=28).pack(side=tk.LEFT)
+            guest = tk.StringVar(value='' if part.get('absent') else part.get('guest', ''))
+            absent = tk.BooleanVar(value=part.get('absent', False))
+            box = ttk.Combobox(line, textvariable=guest, values=names, width=28)
+            box.pack(side=tk.LEFT, padx=8)
+            if absent.get():
+                box.configure(state='disabled')
 
-                def change(target=item):
-                    self._open_seatmate(target)
-                    self._show('seatmates', pull=False)
-
-                ttk.Button(card, text='Change', command=change).pack(anchor='w', pady=(8, 0))
-                continue
-
-            skip = tk.BooleanVar(value=item.get('skip', False))
-            ttk.Checkbutton(card, text='This is not a seating request', variable=skip).pack(anchor='w', pady=(8, 0))
-            editors = []
-            for part in item['parts']:
-                line = ttk.Frame(card)
-                line.pack(fill=tk.X, pady=3)
-                label = part['part'] or 'Also sit with'
-                note = ''
-                if part.get('approximate'):
-                    note = ' (spelling differs)'
-                elif not part.get('guest') and not part.get('added'):
-                    note = ' (not on the guest list)'
-                ttk.Label(line, text=label + note, wraplength=220, width=28).pack(side=tk.LEFT)
-                guest = tk.StringVar(value='' if part.get('absent') else part.get('guest', ''))
-                absent = tk.BooleanVar(value=part.get('absent', False))
-                box = ttk.Combobox(line, textvariable=guest, values=names, width=28)
-                box.pack(side=tk.LEFT, padx=8)
-                if absent.get():
-                    box.configure(state='disabled')
-
-                def mark_absent(var=absent, combo=box, value=guest, target=item):
-                    var.set(True)
-                    value.set('')
-                    combo.configure(state='disabled')
-                    target['touched'] = True
-
-                ttk.Button(line, text='Not attending', command=mark_absent).pack(side=tk.LEFT)
-                editors.append((part, guest, absent))
-
-            def add_person(target=item, store=editors, skip_var=skip):
-                self._write_seatmate(target, skip_var, store, decide=False)
-                target['parts'].append({'part': '', 'guest': '', 'absent': False, 'approximate': False, 'added': True})
+            def mark_absent(var=absent, combo=box, value=guest, target=item):
+                var.set(True)
+                value.set('')
+                combo.configure(state='disabled')
                 target['touched'] = True
-                self._show('seatmates', pull=False)
 
-            def confirm(target=item, store=editors, skip_var=skip):
-                self._write_seatmate(target, skip_var, store, decide=True)
-                if not target['decided']:
-                    return
-                self._show('seatmates', pull=False)
+            ttk.Button(line, text='Not attending', command=mark_absent).pack(side=tk.LEFT)
+            editors.append((part, guest, absent))
 
-            ttk.Button(card, text='Add a person', command=add_person).pack(anchor='w', pady=(6, 0))
-            ttk.Button(card, text='This is correct', command=confirm).pack(anchor='w', pady=(4, 0))
+        def add_person(target=item, store=editors, skip_var=skip):
+            self._write_seatmate(target, skip_var, store, decide=False)
+            target['parts'].append({'part': '', 'guest': '', 'absent': False, 'approximate': False, 'added': True})
+            target['touched'] = True
+            self._show_node(self._current_node(), pull=False)
 
-            def pull(target=item, store=editors, skip_var=skip):
-                self._write_seatmate(target, skip_var, store, decide=False)
+        def confirm(target=item, store=editors, skip_var=skip):
+            self._write_seatmate(target, skip_var, store, decide=True)
+            if target['decided']:
+                self._go_next()
 
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
+        ttk.Button(card, text='Add a person', command=add_person).pack(anchor='w', pady=(6, 0))
+        self._actions(card, 'This is now correct (Save)', confirm)
+
+        def pull(target=item, store=editors, skip_var=skip):
+            self._write_seatmate(target, skip_var, store, decide=False)
+
+        return pull
 
     def _open_seatmate(self, item):
         item['decided'] = False
@@ -490,53 +659,56 @@ class ReviewDialog(tk.Toplevel):
                 return
             item['decided'] = True
 
-    def _build_pairs(self):
-        pulls = []
+    def _build_pairs(self, item):
+        card = self._card(not item['decided'])
+        kind = 'Who should sit together?' if item['kind'] == 'request' else 'Who should not sit together?'
+        ttk.Label(card, text=kind, font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        ttk.Label(
+            card,
+            text='"{}"  /  "{}"'.format(utils._display_phrase(item['left']), utils._display_phrase(item['right'])),
+            wraplength=640,
+        ).pack(anchor='w', pady=(6, 0))
+        if item['decided']:
+            if item['skip']:
+                ttk.Label(card, text='Skipped.', wraplength=640).pack(anchor='w', pady=(8, 0))
+            else:
+                ttk.Label(
+                    card,
+                    text='{}  with  {}'.format(', '.join(item['left_list']), ', '.join(item['right_list'])),
+                    wraplength=640,
+                ).pack(anchor='w', pady=(8, 0))
+
+            def change(target=item):
+                target['decided'] = False
+                self._show_node(self._current_node(), pull=False)
+
+            ttk.Button(card, text='Change', command=change).pack(anchor='w', pady=(8, 0))
+            ttk.Button(card, text='Skip for now', command=self._skip).pack(anchor='w', pady=(4, 0))
+            return lambda: None
+
+        self._explain(card, 'This row is from the requests workbook. Choose the guests on each side, or skip the row.')
+        skip = tk.BooleanVar(value=item.get('skip', False))
+        left = tk.StringVar(value='; '.join(item.get('left_list', [])))
+        right = tk.StringVar(value='; '.join(item.get('right_list', [])))
+        ttk.Checkbutton(card, text='Skip this row', variable=skip).pack(anchor='w')
+        ttk.Label(card, text='Left guests').pack(anchor='w', pady=(6, 0))
         names = corrections.preview_names(self.book, self.state)
-        for item in self.state['pairs'].values():
-            card = self._card(not item['decided'])
-            kind = 'Sit together' if item['kind'] == 'request' else 'Do not sit together'
-            ttk.Label(card, text=kind, font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-            ttk.Label(card, text='"{}"  /  "{}"'.format(item['left'], item['right']), wraplength=640).pack(anchor='w')
-            if item['decided']:
-                if item['skip']:
-                    ttk.Label(card, text='Skipped.').pack(anchor='w', pady=(6, 0))
-                else:
-                    ttk.Label(
-                        card,
-                        text='{}  with  {}'.format(', '.join(item['left_list']), ', '.join(item['right_list'])),
-                        wraplength=640,
-                    ).pack(anchor='w', pady=(6, 0))
+        ttk.Combobox(card, textvariable=left, values=names, width=36).pack(anchor='w')
+        ttk.Label(card, text='Right guests').pack(anchor='w', pady=(6, 0))
+        ttk.Combobox(card, textvariable=right, values=names, width=36).pack(anchor='w')
+        ttk.Label(card, text='Separate more than one guest with a semicolon.').pack(anchor='w')
 
-                def change(target=item):
-                    target['decided'] = False
-                    self._show('pairs', pull=False)
+        def confirm(target=item, left_var=left, right_var=right, skip_var=skip):
+            self._write_pair(target, left_var, right_var, skip_var, decide=True)
+            if target['decided']:
+                self._go_next()
 
-                ttk.Button(card, text='Change', command=change).pack(anchor='w', pady=(8, 0))
-                continue
+        self._actions(card, 'This is now correct (Save)', confirm)
 
-            skip = tk.BooleanVar(value=item.get('skip', False))
-            left = tk.StringVar(value='; '.join(item.get('left_list', [])))
-            right = tk.StringVar(value='; '.join(item.get('right_list', [])))
-            ttk.Checkbutton(card, text='Skip this row', variable=skip).pack(anchor='w', pady=(8, 0))
-            ttk.Label(card, text='Left guests').pack(anchor='w')
-            ttk.Combobox(card, textvariable=left, values=names, width=36).pack(anchor='w')
-            ttk.Label(card, text='Right guests').pack(anchor='w', pady=(6, 0))
-            ttk.Combobox(card, textvariable=right, values=names, width=36).pack(anchor='w')
-            ttk.Label(card, text='Separate more than one guest with a semicolon.').pack(anchor='w')
+        def pull(target=item, left_var=left, right_var=right, skip_var=skip):
+            self._write_pair(target, left_var, right_var, skip_var, decide=False)
 
-            def confirm(target=item, left_var=left, right_var=right, skip_var=skip):
-                self._write_pair(target, left_var, right_var, skip_var, decide=True)
-                if target['decided']:
-                    self._show('pairs', pull=False)
-
-            ttk.Button(card, text='This is correct', command=confirm).pack(anchor='w', pady=(8, 0))
-
-            def pull(target=item, left_var=left, right_var=right, skip_var=skip):
-                self._write_pair(target, left_var, right_var, skip_var, decide=False)
-
-            pulls.append(pull)
-        return lambda: [pull() for pull in pulls]
+        return pull
 
     def _write_pair(self, item, left_var, right_var, skip_var, decide):
         item['skip'] = bool(skip_var.get())
@@ -579,8 +751,7 @@ class ReviewDialog(tk.Toplevel):
 
     def _save_only(self):
         self._pull()
-        if self._write_file(notify=True):
-            return
+        self._write_file(notify=True)
 
     def _write_file(self, notify):
         try:
@@ -601,13 +772,9 @@ class ReviewDialog(tk.Toplevel):
         errors = corrections.validate(self.book, self.state)
         if errors:
             messagebox.showerror('Still needs an answer', '\n'.join(errors[:12]), parent=self)
-            self._refresh_list()
-            for index, key in enumerate(self._keys):
-                if corrections.section_defs(self.state)[index][2]:
-                    self.section_list.selection_clear(0, tk.END)
-                    self.section_list.selection_set(index)
-                    self._show(key, pull=False)
-                    break
+            pending = self._first_pending()
+            if pending:
+                self._show_node(pending, pull=False)
             return
         corrections.apply_all(self.book, self.state)
         if not self._write_file(notify=False):
@@ -623,3 +790,10 @@ class ReviewDialog(tk.Toplevel):
 def ask_review(parent, book, path):
     dialog = ReviewDialog(parent, book, path)
     return dialog.ask()
+
+
+def _short(text, limit=48):
+    text = ' '.join(str(text).split())
+    if len(text) <= limit:
+        return text
+    return text[:limit - 1] + '…'

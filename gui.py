@@ -154,7 +154,6 @@ class TableNumberDialog(tk.Toplevel):
     def __init__(self, master, tables):
         super().__init__(master)
         self.title('Table numbers')
-        self.transient(master)
         self.result = None
         self.tables = list(tables)
         self.vars = []
@@ -210,6 +209,7 @@ class TableNumberDialog(tk.Toplevel):
         self.bind('<MouseWheel>', lambda event: canvas.yview_scroll(int(-event.delta / 120), 'units'))
         self.bind('<Escape>', lambda _event: self.cancel())
         self.after(50, lambda: self.vars and self.focus_set())
+        utils.keep_minmax(self, master)
 
     def ask(self):
         self.grab_set()
@@ -603,6 +603,7 @@ def main(creator=None):
     root.minsize(780, 620)
     root.geometry('980x740')
     _apply_styles()
+    utils.keep_minmax(root)
     App(root, creator, rosters)
     root.mainloop()
 

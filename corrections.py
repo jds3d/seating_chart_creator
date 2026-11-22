@@ -154,13 +154,13 @@ def preview_names(book, state):
     names = set(book.guests)
     for item in state['names'].values():
         written = item['written']
-        correct = utils._norm(item.get('name', ''))
+        correct = utils._person_name(item.get('name', ''))
         if not correct:
             continue
         names = {name for name in names if utils._key(name) != utils._key(written)}
         names.add(correct)
     for payer, item in state['missing'].items():
-        entered = [utils._norm(person.get('name', '')) for person in item['people']]
+        entered = [utils._person_name(person.get('name', '')) for person in item['people']]
         entered = [name for name in entered if name]
         for name in entered:
             names.add(name)
@@ -169,7 +169,7 @@ def preview_names(book, state):
             if not any(utils._key(name) == payer_key for name in entered):
                 names = {name for name in names if utils._key(name) != payer_key}
     for pair, item in state['duplicates'].items():
-        if item.get('decided') and utils._norm(item.get('same_as', '')):
+        if item.get('decided') and utils._person_name(item.get('same_as', '')):
             keep = utils._key(item['same_as'])
             drop = pair[0] if utils._key(pair[1]) == keep else pair[1]
             names = {name for name in names if utils._key(name) != utils._key(drop)}
@@ -191,7 +191,7 @@ def refresh_open_seatmates(book, state):
 def _temporary_names(book, names):
     added = []
     for name in names:
-        name = utils._norm(name)
+        name = utils._person_name(name)
         key = utils._key(name)
         if not key or key in book.by_key:
             continue
@@ -214,14 +214,14 @@ def validate(book, state):
         if not item['decided']:
             errors.append('Confirm the people for {}.'.format(payer))
             continue
-        if not any(utils._norm(person.get('name', '')) for person in item['people']):
+        if not any(utils._person_name(person.get('name', '')) for person in item['people']):
             errors.append('Enter at least one person for {}.'.format(payer))
-        elif any(not utils._norm(person.get('name', '')) for person in item['people']):
+        elif any(not utils._person_name(person.get('name', '')) for person in item['people']):
             errors.append('Enter a name on every row for {}.'.format(payer))
     for item in state['names'].values():
         if not item['decided']:
             errors.append('Confirm the full name for {}.'.format(item['written']))
-        elif ' ' not in utils._norm(item.get('name', '')):
+        elif ' ' not in utils._person_name(item.get('name', '')):
             errors.append('Give {} a first and last name.'.format(item['written']))
     for guest, item in state['emails'].items():
         if not item['decided']:
@@ -278,7 +278,7 @@ def _apply_duplicates(book, state):
     for pair, item in state['duplicates'].items():
         if not item.get('decided'):
             continue
-        keep = utils._norm(item.get('same_as', ''))
+        keep = utils._person_name(item.get('same_as', ''))
         if not keep:
             continue
         drop = pair[0] if utils._key(pair[1]) == utils._key(keep) else pair[1]
@@ -287,7 +287,7 @@ def _apply_duplicates(book, state):
 
 def _apply_names(book, state):
     for item in state['names'].values():
-        if item.get('decided') and utils._norm(item.get('name', '')):
+        if item.get('decided') and utils._person_name(item.get('name', '')):
             book.rename_guest(item['written'], item['name'])
 
 
@@ -302,7 +302,7 @@ def _apply_missing(book, state):
                 break
         people = []
         for person in item['people']:
-            name = utils._norm(person.get('name', ''))
+            name = utils._person_name(person.get('name', ''))
             if not name:
                 continue
             canonical = book.add(name, email, '')
@@ -394,14 +394,14 @@ def _build_missing(book, loaded):
         payer = issue['payer']
         rows = saved.get(utils._key(payer))
         if rows:
-            people = [{'name': row['Person'], 'choice': row['Choice']} for row in rows]
+            people = [{'name': utils._person_name(row['Person']), 'choice': row['Choice']} for row in rows]
             decided = True
         else:
             choices = issue['choices'] or ['']
-            people = [{'name': payer if index == 0 else '', 'choice': choice} for index, choice in enumerate(choices)]
+            people = [{'name': utils._person_name(payer) if index == 0 else '', 'choice': choice} for index, choice in enumerate(choices)]
             decided = False
-        items[payer] = {
-            'payer': payer,
+        items[utils._person_name(payer)] = {
+            'payer': utils._person_name(payer),
             'email': issue['email'],
             'choices': list(issue['choices']),
             'people': people,
@@ -427,9 +427,10 @@ def _build_names(book, loaded):
             if payer_tokens and utils._key(written) != payer_tokens[-1]:
                 name = '{} {}'.format(written, issue['payer'].split()[-1])
             decided = False
+        name = utils._person_name(name)
         items[key] = {
-            'written': written,
-            'payer': issue['payer'],
+            'written': utils._person_name(written),
+            'payer': utils._person_name(issue['payer']),
             'name': name,
             'decided': decided,
         }
@@ -619,9 +620,9 @@ def _missing_rows(state, previous):
             continue
         seen.add(utils._key(payer))
         for person in item['people']:
-            name = utils._norm(person.get('name', ''))
+            name = utils._person_name(person.get('name', ''))
             if name:
-                rows.append((payer, name, person.get('choice', '')))
+                rows.append((utils._person_name(payer), name, person.get('choice', '')))
     for row in previous.get('missing', []):
         if utils._key(row['Payer']) not in seen:
             rows.append((row['Payer'], row['Person'], row['Choice']))
@@ -635,7 +636,7 @@ def _name_rows(state, previous):
         if not item.get('decided'):
             continue
         seen.add(utils._key(item['written']))
-        rows.append((item['written'], utils._norm(item.get('name', ''))))
+        rows.append((utils._person_name(item['written']), utils._person_name(item.get('name', ''))))
     for row in previous.get('names', []):
         if utils._key(row['As written']) not in seen:
             rows.append((row['As written'], row['Correct name']))
@@ -745,7 +746,7 @@ def _split_names(value):
     text = utils._as_text(value)
     if not text:
         return []
-    return [utils._norm(part) for part in text.split(';') if utils._norm(part)]
+    return [utils._person_name(part) for part in text.split(';') if utils._person_name(part)]
 
 
 def _is_yes(value):
