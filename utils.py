@@ -940,6 +940,15 @@ def _force_minmax_style(window):
         return
 
 
+def _window_state(window):
+    """Read the window state without using widget.state(), which a dialog may overwrite."""
+    import tkinter as tk
+    try:
+        return str(window.tk.call('wm', 'state', window))
+    except tk.TclError:
+        return ''
+
+
 def _minimize_together(window, master):
     """Minimizing one window minimizes the other, so a dialog cannot hide the app."""
     import tkinter as tk
@@ -948,7 +957,7 @@ def _minimize_together(window, master):
         if event.widget is not window:
             return
         try:
-            if window.state() == 'iconic' and master.winfo_exists() and master.state() != 'iconic':
+            if _window_state(window) == 'iconic' and master.winfo_exists() and _window_state(master) != 'iconic':
                 master.iconify()
         except tk.TclError:
             pass
@@ -957,7 +966,7 @@ def _minimize_together(window, master):
         if event.widget is not window:
             return
         try:
-            if master.winfo_exists() and master.state() == 'iconic':
+            if master.winfo_exists() and _window_state(master) == 'iconic':
                 master.deiconify()
         except tk.TclError:
             pass
@@ -966,7 +975,7 @@ def _minimize_together(window, master):
         if event.widget is not master:
             return
         try:
-            if window.winfo_exists() and window.state() == 'iconic':
+            if window.winfo_exists() and _window_state(window) == 'iconic':
                 window.deiconify()
                 window.lift()
         except tk.TclError:

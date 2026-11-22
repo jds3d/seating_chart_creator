@@ -19,6 +19,7 @@ class ReviewDialog(tk.Toplevel):
         self._current = None
         self._nav_lock = False
         self._iid_info = {}
+        self._wrapping = []
         try:
             self.loaded = corrections.load_corrections(path)
         except PermissionError:
@@ -67,7 +68,7 @@ class ReviewDialog(tk.Toplevel):
         self.canvas.configure(yscrollcommand=scroll.set)
         self.canvas.grid(row=0, column=0, sticky='nsew')
         scroll.grid(row=0, column=1, sticky='ns')
-        self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfigure(self._window, width=event.width))
+        self.canvas.bind('<Configure>', self._fit_canvas)
         self.body.bind('<Configure>', lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
         self.canvas.bind('<MouseWheel>', lambda event: self.canvas.yview_scroll(int(-event.delta / 120), 'units'))
 
@@ -243,6 +244,7 @@ class ReviewDialog(tk.Toplevel):
         if node['section'] == 'seatmates':
             corrections.refresh_open_seatmates(self.book, self.state)
         self._current = node['id']
+        self._wrapping = []
         for child in self.body.winfo_children():
             child.destroy()
         item = self.state[node['section']][node['key']]
@@ -261,6 +263,7 @@ class ReviewDialog(tk.Toplevel):
             self._pull = builders[node['section']](item)
         self.canvas.yview_moveto(0)
         self._refresh_tree()
+        self.after_idle(self._fit_wrapping)
 
     def _go_next(self):
         items = self._all_items()
@@ -289,14 +292,31 @@ class ReviewDialog(tk.Toplevel):
         ttk.Button(row, text=confirm_text, command=confirm_command).pack(side=tk.LEFT)
         ttk.Button(row, text='Skip for now', command=self._skip).pack(side=tk.LEFT, padx=(8, 0))
 
+    def _fit_canvas(self, event):
+        self.canvas.itemconfigure(self._window, width=event.width)
+        self._fit_wrapping(event.width)
+
+    def _fit_wrapping(self, width=None):
+        if width is None:
+            width = self.canvas.winfo_width()
+        if width <= 1:
+            return
+        for label, pad in self._wrapping:
+            try:
+                label.configure(wraplength=max(width - pad, 180))
+            except tk.TclError:
+                pass
+
+    def _wrap_label(self, parent, pad=56, **kwargs):
+        label = ttk.Label(parent, justify='left', **kwargs)
+        self._wrapping.append((label, pad))
+        width = self.canvas.winfo_width()
+        if width > 1:
+            label.configure(wraplength=max(width - pad, 180))
+        return label
+
     def _explain(self, parent, text):
-        label = ttk.Label(parent, text=text, justify='left', wraplength=640)
-        label.pack(anchor='w', fill=tk.X, pady=(6, 8))
-
-        def fit(event, widget=label):
-            widget.configure(wraplength=max(event.width - 8, 280))
-
-        parent.bind('<Configure>', fit, add='+')
+        self._wrap_label(parent, text=text).pack(anchor='w', fill=tk.X, pady=(6, 8))
 
     def _card(self, needs_answer):
         card = ttk.Frame(self.body, padding=12)
@@ -507,17 +527,26 @@ class ReviewDialog(tk.Toplevel):
 
         return pull
 
+    def _labeled_value(self, parent, label, value):
+        ttk.Label(parent, text=label, foreground='#555555').pack(anchor='w', pady=(10, 0))
+        self._wrap_label(parent, text=value, font=('Segoe UI', 11, 'bold')).pack(anchor='w', fill=tk.X)
+
     def _build_seatmates(self, item):
         card = self._card(not item['decided'])
         ttk.Label(card, text='Who should sit together?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
-        ttk.Label(card, text='"{}"'.format(utils._display_phrase(item['raw'])), font=('Segoe UI', 11, 'bold'), wraplength=640).pack(anchor='w', pady=(6, 0))
+        self._labeled_value(card, 'Written as', '"{}"'.format(utils._display_phrase(item['raw'])))
         if item['asked_by']:
-            ttk.Label(card, text='Written on the purchase for {}'.format(', '.join(item['asked_by'])), wraplength=640).pack(anchor='w')
+            self._wrap_label(
+                card,
+                text='On the purchase for {}'.format(', '.join(item['asked_by'])),
+            ).pack(anchor='w', fill=tk.X, pady=(2, 0))
         if item['decided']:
             if item['skip']:
-                ttk.Label(card, text='This is not a seating request.', wraplength=640).pack(anchor='w', pady=(8, 0))
+                self._labeled_value(card, 'Matched guest', 'Not a seating request')
             else:
-                ttk.Label(card, text='Sits with {}'.format(', '.join(item['sit_with'])), wraplength=640).pack(anchor='w', pady=(8, 0))
+                matched = ', '.join(item['sit_with']) or 'Nobody'
+                label = 'Matched guest' if len(item['sit_with']) == 1 else 'Matched guests'
+                self._labeled_value(card, label, matched)
 
             def change(target=item):
                 self._open_seatmate(target)
@@ -536,6 +565,10 @@ class ReviewDialog(tk.Toplevel):
         ttk.Checkbutton(card, text='This is not a seating request', variable=skip).pack(anchor='w', pady=(4, 0))
         names = corrections.preview_names(self.book, self.state)
         editors = []
+        headers = ttk.Frame(card)
+        headers.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(headers, text='Written as', width=28).pack(side=tk.LEFT)
+        ttk.Label(headers, text='Matched guest').pack(side=tk.LEFT, padx=8)
         for part in item['parts']:
             line = ttk.Frame(card)
             line.pack(fill=tk.X, pady=3)
@@ -663,20 +696,20 @@ class ReviewDialog(tk.Toplevel):
         card = self._card(not item['decided'])
         kind = 'Who should sit together?' if item['kind'] == 'request' else 'Who should not sit together?'
         ttk.Label(card, text=kind, font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
-        ttk.Label(
+        self._labeled_value(
             card,
-            text='"{}"  /  "{}"'.format(utils._display_phrase(item['left']), utils._display_phrase(item['right'])),
-            wraplength=640,
-        ).pack(anchor='w', pady=(6, 0))
+            'Written as',
+            '"{}"  /  "{}"'.format(utils._display_phrase(item['left']), utils._display_phrase(item['right'])),
+        )
         if item['decided']:
             if item['skip']:
-                ttk.Label(card, text='Skipped.', wraplength=640).pack(anchor='w', pady=(8, 0))
+                self._labeled_value(card, 'Matched guests', 'This row will not be used')
             else:
-                ttk.Label(
+                self._labeled_value(
                     card,
-                    text='{}  with  {}'.format(', '.join(item['left_list']), ', '.join(item['right_list'])),
-                    wraplength=640,
-                ).pack(anchor='w', pady=(8, 0))
+                    'Matched guests',
+                    '{}  with  {}'.format(', '.join(item['left_list']), ', '.join(item['right_list'])),
+                )
 
             def change(target=item):
                 target['decided'] = False
