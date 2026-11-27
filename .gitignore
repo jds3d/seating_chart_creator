@@ -11,3 +11,4 @@ release/
 *.spec
 error.log
 /configuration.json
+/Cheddar Up exports/

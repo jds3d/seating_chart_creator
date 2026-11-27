@@ -23,7 +23,12 @@ HOW_TO = """Double-click "Seating Chart Creator.exe".
 
 Keep Requests.xlsx in this same folder. The program reads it every time you make a chart.
 
-The window keeps the last Cheddar Up file you selected. Browse again when you download a new one. That file can stay in Downloads.
+To get the newest Cheddar Up export, click "Download latest from Cheddar Up".
+Cheddar Up opens in your browser. Sign in if it asks, open the TVNJC collection, then Manage > Reports > Collection Summary.
+Leave the file in Downloads. The window picks it up as soon as it finishes, copies it into the "Cheddar Up exports" folder, and offers to make the seating chart.
+If the export is already in Downloads, the button offers to use it right away.
+
+You can still click Browse to pick a Cheddar Up file yourself. The window keeps the last one you used.
 
 Finished seating charts and table rosters are saved in the output folder.
 
