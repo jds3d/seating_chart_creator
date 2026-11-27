@@ -54,8 +54,10 @@ def guest_names():
 def _item_sheet(workbook, title, rows, cost):
     sheet = workbook.create_sheet(title)
     sheet.append(ITEM_HEADERS)
-    for first, last, email, status, attendees, seatmate in rows:
-        qty = len(attendees)
+    for row in rows:
+        first, last, email, status, attendees, seatmate = row[:6]
+        # An optional 7th value is the ticket quantity, for purchases that name fewer people.
+        qty = row[6] if len(row) > 6 else len(attendees)
         net_qty = 0 if status == 'refunded' else qty
         cells = [
             'Nov 20, 2026 10:00 AM EST', 'card', '4242', status, first, last, email,
@@ -70,7 +72,7 @@ def _item_sheet(workbook, title, rows, cost):
     return sheet
 
 
-def write_export(path, extra_tabs=1, collection='TVNJC Test Dinner'):
+def write_export(path, extra_tabs=1, collection='TVNJC Test Dinner', member_rows=None, guest_rows=None):
     """A collection summary shaped like Cheddar Up's: guests on tabs 5 and 6."""
     workbook = Workbook()
     summary = workbook.active
@@ -80,8 +82,8 @@ def write_export(path, extra_tabs=1, collection='TVNJC Test Dinner'):
     workbook.create_sheet('Payments').append(['Payment ID', 'Payment Method', 'Status', 'First Name', 'Last Name'])
     workbook.create_sheet('All Purchases').append(['Payment ID', 'Item', 'Quantity'])
     workbook.create_sheet('Item Summary').append(['Item Name', 'Cost', 'Net Quantity'])
-    _item_sheet(workbook, '1-Member-Dinner-40', MEMBER_ROWS, 40)
-    _item_sheet(workbook, '2-Guest-Dinner-50', GUEST_ROWS, 50)
+    _item_sheet(workbook, '1-Member-Dinner-40', MEMBER_ROWS if member_rows is None else member_rows, 40)
+    _item_sheet(workbook, '2-Guest-Dinner-50', GUEST_ROWS if guest_rows is None else guest_rows, 50)
     for index in range(extra_tabs):
         workbook.create_sheet('{}-Raffle'.format(7 + index)).append(['Item Name', 'Qty'])
     workbook.save(path)

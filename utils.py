@@ -154,6 +154,13 @@ def _at(row, index):
     return row[index]
 
 
+def _quantity(value):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _is_zero(value):
     if value is None or value == '':
         return False
@@ -222,6 +229,8 @@ class GuestBook:
         self.ignored_antis = []
         self.warnings = []
         self._similar_warned = set()
+        # Headcount per guest tab, filled in as tabs 5 and 6 are read.
+        self.tab_heads = []
 
     def add(self, display_name, email, choice):
         display_name = _person_name(display_name)
@@ -676,14 +685,19 @@ def _read_item_sheet(worksheet, position, book):
     seatmate_indexes = [index for index, header in enumerate(headers) if _is_seatmate_header(header)]
 
     row_count = 0
+    heads = {'position': position, 'title': worksheet.title, 'rows': 0, 'skipped_rows': 0,
+             'heads': 0, 'new': 0, 'payer_only': 0, 'repeats': [], 'tickets': 0}
     for row in worksheet.iter_rows(min_row=2, values_only=True):
         if not any(_as_text(cell) for cell in row):
             continue
         status = _as_text(_at(row, status_index)).casefold()
         if status in SKIP_PAYMENT_STATUSES:
+            heads['skipped_rows'] += 1
             continue
         if _is_zero(_at(row, net_index)):
+            heads['skipped_rows'] += 1
             continue
+        heads['tickets'] += _quantity(_at(row, net_index))
 
         email = _at(row, email_index)
         payer = _person_name('{} {}'.format(_as_text(_at(row, first_index)), _as_text(_at(row, last_index))))
@@ -707,6 +721,7 @@ def _read_item_sheet(worksheet, position, book):
             book.warnings.append('No attendee names for payer "{}". Using the payer name.{}'.format(payer, extra))
             book.note_missing_attendee(payer, email, unnamed_choices)
             book.placeholder_keys.add(_key(payer))
+            heads['payer_only'] += 1
         elif unnamed_choices:
             book.warnings.append(
                 '{} has choices with no attendee name: {}.'.format(payer or named[0][0], ', '.join(unnamed_choices)))
@@ -724,14 +739,78 @@ def _read_item_sheet(worksheet, position, book):
                         name, payer, name))
             else:
                 book.real_name_keys.add(_key(name))
+            already_listed = _key(name) in book.by_key
             canonical = book.add(name, email, choice)
+            if canonical:
+                heads['heads'] += 1
+                if already_listed:
+                    heads['repeats'].append(canonical)
+                else:
+                    heads['new'] += 1
             if canonical and canonical not in party:
                 party.append(canonical)
         party = book.link_party(party)
         seatmates = [_at(row, index) for index in seatmate_indexes]
         book.record_seatmate_cell(party, seatmates)
         row_count += 1
-    print('Tab {} {!r}: {} purchase rows.'.format(position, worksheet.title, row_count))
+    heads['rows'] = row_count
+    book.tab_heads.append(heads)
+    print('Tab {} {!r}: {} purchase rows, {} names listed, {} guests not on an earlier tab.'.format(
+        position, worksheet.title, row_count, heads['heads'], heads['new']))
+
+
+def _plural(number, noun):
+    return '{} {}{}'.format(number, noun, '' if number == 1 else 's')
+
+
+def headcount(book):
+    """Totals for the guest tabs read into book.
+
+    people is the number of different guests, the same guests a seating
+    chart starts from. names counts every attendee name on a counted row,
+    plus the payer when a purchase names nobody, so a party listed on two
+    ticket rows is named twice but is still the same people. Refunded and
+    zero-quantity rows are not counted, the same as when guests are read.
+    """
+    tabs = list(getattr(book, 'tab_heads', []))
+    return {
+        'tabs': tabs,
+        'people': len(book.guests),
+        'names': sum(tab['heads'] for tab in tabs),
+        'repeats': [name for tab in tabs for name in tab['repeats']],
+        'payer_only': sum(tab['payer_only'] for tab in tabs),
+        'skipped_rows': sum(tab['skipped_rows'] for tab in tabs),
+        'tickets': sum(tab['tickets'] for tab in tabs),
+    }
+
+
+def headcount_lines(counts):
+    tabs = counts['tabs']
+    lines = ['Headcount: {} ({}).'.format(
+        _plural(counts['people'], 'guest'),
+        ' + '.join('{} from tab {}'.format(tab['new'], tab['position']) for tab in tabs) or 'no guest tabs')]
+    lines.append('Names listed: {} ({}).'.format(
+        counts['names'], ' + '.join('{} on tab {}'.format(tab['heads'], tab['position']) for tab in tabs)))
+    repeats = counts['repeats']
+    if repeats:
+        seen = []
+        for name in repeats:
+            if name not in seen:
+                seen.append(name)
+        lines.append('{} of those repeat a name already listed, often the same party on another ticket row, '
+                     'and are counted once: {}.'.format(len(repeats), ', '.join(seen)))
+    if counts['payer_only']:
+        lines.append('{} named nobody, so only the payer is counted.'.format(
+            _plural(counts['payer_only'], 'purchase')))
+    difference = counts['tickets'] - counts['people']
+    if difference:
+        lines.append('Tickets paid (Net Quantity): {}, which is {} {} than the guests named.'.format(
+            counts['tickets'], abs(difference), 'more' if difference > 0 else 'fewer'))
+    else:
+        lines.append('Tickets paid (Net Quantity): {}, the same as the guests named.'.format(counts['tickets']))
+    if counts['skipped_rows']:
+        lines.append('{} not counted.'.format(_plural(counts['skipped_rows'], 'refunded or zero-quantity row')))
+    return lines
 
 
 def readGuestList(export_path=None, requests_path=None):

@@ -537,6 +537,8 @@ class App(ttk.Frame):
                     self._log('No guests were read from tabs 5 and 6.\n')
                     tables = None
                 else:
+                    counts = utils.headcount(book)
+                    self._log('\n' + '\n'.join(utils.headcount_lines(counts)) + '\n\n')
                     self._set_cursor(False)
                     self._log('Check each warning. A guess is not used until you confirm it.\n')
                     corrections_file = os.path.join(APP_DIR, corrections.CORRECTIONS_WORKBOOK)
@@ -556,6 +558,7 @@ class App(ttk.Frame):
                             table_size=table_size,
                             group_limit=group_limit,
                         )
+                    self._log_seated(counts, len(book.guests), tables)
                     extra = book.extra
                     emails = book.emails
                     polls = book.polls
@@ -669,6 +672,17 @@ class App(ttk.Frame):
             messagebox.showerror('Rosters', 'Something went wrong. The activity log has the details.', parent=self)
         finally:
             self._set_busy(False)
+
+    def _log_seated(self, counts, after_review, tables):
+        seated = sum(len(table) for table in tables or ())
+        self._log('\nHeadcount read from the export: {}. Seated: {} at {} tables.\n'.format(
+            counts['people'], seated, len(tables or ())))
+        if after_review != counts['people']:
+            change = counts['people'] - after_review
+            self._log('The review {} {} (merged or removed names).\n'.format(
+                'took out' if change > 0 else 'added', utils._plural(abs(change), 'guest')))
+        if seated != after_review:
+            self._log('WARNING: {} guests after the review, but {} were seated.\n'.format(after_review, seated))
 
     def _confirm_large_group(self, group, size, limit):
         names = '\n'.join(sorted(utils.formatNameWithoutFamilyName(name) for name in group))

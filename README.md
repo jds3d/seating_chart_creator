@@ -38,6 +38,16 @@ Optional settings in `configuration.json` (not in git):
 - `downloads_folder`: where the browser saves files, if it is not the Windows Downloads folder.
 
 To check from a command prompt: `python cheddar_up.py` prints the newest export in Downloads and its tabs 5 and 6.
+
+# Headcount
+Whenever an export is read (the command above, "Download latest from Cheddar Up", and "Create seating chart"),
+the Activity log shows a headcount. It uses the same code that reads guests for the chart, so it skips blank
+names and refunded or zero-quantity rows, and counts the payer when a purchase names nobody.
+- Headcount: different guests, the people the seating chart starts from.
+- Names listed: every attendee name on a counted row. Cheddar Up often repeats a party's names on each
+  ticket row, so this can be higher; the repeated names are listed.
+- Tickets paid: the Net Quantity total, for comparison.
+After the chart is made, the log also shows how many were seated, and how many the review merged or removed.
 `python cheddar_up.py --open --wait 600` opens Cheddar Up and waits up to 10 minutes for a new one.
 
 # Tests

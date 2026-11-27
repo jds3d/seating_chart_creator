@@ -121,7 +121,13 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.app.download_button.cget('text'), 'Download latest from Cheddar Up')
         self.errors.assert_not_called()
         self.assertIn('Collection: TVNJC Test Dinner', seen[0])
-        self.assertIn("Tab 5 '1-Member-Dinner-40': 9 rows, 2 attendee name columns, 1 seatmate request column.", seen[0])
+        self.assertIn("Tab 5 '1-Member-Dinner-40': 9 rows, 2 attendee name columns, 1 seatmate request column, "
+                      "13 names listed, 13 different guests (1 refunded or zero-quantity row skipped).", seen[0])
+        self.assertIn('Headcount: 19 guests (13 from tab 5 + 6 from tab 6).', seen[0])
+        # The chart run logs the headcount it read and how many it seated.
+        self.assertIn('Headcount: 19 guests (13 from tab 5 + 6 from tab 6).', self.log())
+        self.assertIn('Headcount read from the export: 19. Seated: 19 at ', self.log())
+        self.assertNotIn('WARNING: ', self.log())
 
     def test_uses_an_export_already_in_downloads(self):
         synthetic.write_export(os.path.join(self.downloads, EXPORT_NAME))

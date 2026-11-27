@@ -18,8 +18,10 @@ Check from a command prompt without opening the window:
     python cheddar_up.py --wait 600   wait up to 10 minutes for a new one
 """
 
+import contextlib
 import datetime
 import fnmatch
+import io
 import os
 import shutil
 import sys
@@ -210,9 +212,11 @@ def import_export(path, exports_dir):
 def describe_export(path):
     """Summarize an export and list anything that would stop a seating chart.
 
-    Returns a dict with collection, tabs, guest_tabs and problems.
+    Returns a dict with collection, tabs, guest_tabs, headcount and problems.
+    The headcount comes from the same code that reads guests for a seating
+    chart, so it matches the guests the chart starts from.
     """
-    summary = {'path': path, 'collection': '', 'tabs': [], 'guest_tabs': [], 'problems': []}
+    summary = {'path': path, 'collection': '', 'tabs': [], 'guest_tabs': [], 'headcount': None, 'problems': []}
     try:
         workbook = load_workbook(path, data_only=True, read_only=True)
     except Exception as error:
@@ -230,6 +234,7 @@ def describe_export(path):
             summary['problems'].append(
                 'It has {} tabs. Guests are read from tabs 5 and 6.'.format(len(sheets)))
             return summary
+        book = utils.GuestBook()
         for position in utils.GUEST_TAB_POSITIONS:
             sheet = sheets[position - 1]
             try:
@@ -241,15 +246,31 @@ def describe_export(path):
             for row in sheet.iter_rows(min_row=2, values_only=True):
                 if any(utils._as_text(cell) for cell in row):
                     rows += 1
-            summary['guest_tabs'].append({
+            tab = {
                 'position': position,
                 'title': sheet.title,
                 'rows': rows,
                 'attendee_columns': len(attendees),
                 'seatmate_columns': sum(1 for header in headers if utils._is_seatmate_header(header)),
-            })
+                'heads': None,
+                'guests': None,
+                'skipped_rows': 0,
+            }
+            summary['guest_tabs'].append(tab)
             if not attendees:
                 summary['problems'].append('Tab {} ({}) has no attendee name columns.'.format(position, sheet.title))
+                continue
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    utils._read_item_sheet(sheet, position, book)
+            except SystemExit:
+                continue
+            counted = book.tab_heads[-1]
+            tab['heads'] = counted['heads']
+            tab['guests'] = counted['new']
+            tab['skipped_rows'] = counted['skipped_rows']
+        if book.tab_heads:
+            summary['headcount'] = utils.headcount(book)
     finally:
         workbook.close()
     return summary
@@ -266,11 +287,24 @@ def summary_lines(summary):
     if summary['tabs']:
         lines.append('{} tabs.'.format(len(summary['tabs'])))
     for tab in summary['guest_tabs']:
-        lines.append('Tab {} {!r}: {}, {}, {}.'.format(
-            tab['position'], tab['title'],
+        parts = [
             _count(tab['rows'], 'row'),
             _count(tab['attendee_columns'], 'attendee name column'),
-            _count(tab['seatmate_columns'], 'seatmate request column')))
+            _count(tab['seatmate_columns'], 'seatmate request column'),
+        ]
+        if tab.get('heads') is not None:
+            parts.append(_count(tab['heads'], 'name') + ' listed')
+            if tab['position'] == utils.GUEST_TAB_POSITIONS[0]:
+                guests = _count(tab['guests'], 'different guest')
+            else:
+                guests = '{} not already on tab {}'.format(
+                    _count(tab['guests'], 'guest'), utils.GUEST_TAB_POSITIONS[0])
+            if tab.get('skipped_rows'):
+                guests += ' ({} skipped)'.format(_count(tab['skipped_rows'], 'refunded or zero-quantity row'))
+            parts.append(guests)
+        lines.append('Tab {} {!r}: {}.'.format(tab['position'], tab['title'], ', '.join(parts)))
+    if summary.get('headcount'):
+        lines.extend(utils.headcount_lines(summary['headcount']))
     for problem in summary['problems']:
         lines.append('WARNING: ' + problem)
     return lines
