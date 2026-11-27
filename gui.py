@@ -12,6 +12,7 @@ import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import cheddar_up
 import corrections
 import review
 import utils
@@ -55,6 +56,11 @@ def _read_config():
 def _load_cheddar_up_export():
     saved = _read_config().get('cheddar_up_export', '')
     return saved.strip() if isinstance(saved, str) else ''
+
+
+def _load_setting(key, default=''):
+    saved = _read_config().get(key, default)
+    return saved.strip() if isinstance(saved, str) else default
 
 
 def _save_cheddar_up_export(path):
@@ -252,6 +258,9 @@ class App(ttk.Frame):
         self.status_var = tk.StringVar(
             value=os.path.basename(saved_export) if saved_export else 'Choose a Cheddar Up export and a requests workbook.'
         )
+        self._busy = False
+        self._watcher = None
+        self._watch_job = None
 
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
@@ -278,10 +287,16 @@ class App(ttk.Frame):
         self.export_entry = ttk.Entry(config, textvariable=self.export_var)
         self.export_entry.grid(row=0, column=1, sticky='ew', padx=8)
         ttk.Button(config, text='Browse…', command=self.browse_export).grid(row=0, column=2)
-        ttk.Label(config, text='Requests').grid(row=1, column=0, sticky='w', pady=(8, 0))
+        cheddar = ttk.Frame(config)
+        cheddar.grid(row=1, column=1, columnspan=2, sticky='w', padx=8, pady=(6, 0))
+        self.download_button = ttk.Button(
+            cheddar, text='Download latest from Cheddar Up', command=self.download_latest_export)
+        self.download_button.pack(side=tk.LEFT)
+        ttk.Button(cheddar, text='Open Cheddar Up', command=self.open_cheddar_up).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(config, text='Requests').grid(row=2, column=0, sticky='w', pady=(8, 0))
         self.requests_entry = ttk.Entry(config, textvariable=self.requests_var)
-        self.requests_entry.grid(row=1, column=1, sticky='ew', padx=8, pady=(8, 0))
-        ttk.Button(config, text='Browse…', command=self.browse_requests).grid(row=1, column=2, pady=(8, 0))
+        self.requests_entry.grid(row=2, column=1, sticky='ew', padx=8, pady=(8, 0))
+        ttk.Button(config, text='Browse…', command=self.browse_requests).grid(row=2, column=2, pady=(8, 0))
         self.export_entry.xview_moveto(1)
         self.requests_entry.xview_moveto(1)
 
@@ -330,6 +345,7 @@ class App(ttk.Frame):
                 self._log('That file was not found. Browse to pick the new one.\n')
         else:
             self._log('Choose a Cheddar Up collection summary and a requests workbook, then create a seating chart.\n')
+        self._note_newer_download(saved_export)
 
     def browse_export(self):
         current = self.export_var.get().strip()
@@ -361,6 +377,117 @@ class App(ttk.Frame):
         self.requests_var.set(path)
         self.requests_entry.xview_moveto(1)
         self.status_var.set(os.path.basename(path))
+
+    def _downloads_folder(self):
+        return cheddar_up.downloads_folder(_load_setting('downloads_folder'))
+
+    def _collection_filter(self):
+        return _load_setting('cheddar_up_collection_filter', cheddar_up.DEFAULT_COLLECTION_FILTER)
+
+    def _cheddar_up_url(self):
+        return _load_setting('cheddar_up_url', cheddar_up.CHEDDAR_UP_URL) or cheddar_up.CHEDDAR_UP_URL
+
+    def _note_newer_download(self, current):
+        try:
+            newest = cheddar_up.find_latest_export(self._downloads_folder(), self._collection_filter())
+        except Exception:
+            return
+        if newest and cheddar_up.is_newer(newest, current):
+            self._log('A newer Cheddar Up export is in Downloads:\n{}\n'
+                      'Click "Download latest from Cheddar Up" to use it.\n'.format(os.path.basename(newest)))
+
+    def open_cheddar_up(self):
+        url = self._cheddar_up_url()
+        self._log('Opening {}\n'.format(url))
+        cheddar_up.open_cheddar_up(url)
+
+    def download_latest_export(self):
+        if self._watcher is not None:
+            self._stop_watching('Stopped waiting for the Cheddar Up download.')
+            return
+        folder = self._downloads_folder()
+        current = self.export_var.get().strip()
+        newest = cheddar_up.find_latest_export(folder, self._collection_filter())
+        if newest and cheddar_up.is_newer(newest, current):
+            when = datetime.datetime.fromtimestamp(os.path.getmtime(newest)).strftime('%b %d %I:%M %p')
+            answer = messagebox.askyesnocancel(
+                'Cheddar Up export',
+                'This export is already in Downloads:\n\n{}\n(saved {})\n\n'
+                'Yes: use it.\nNo: open Cheddar Up and download a new one.'.format(os.path.basename(newest), when),
+                parent=self,
+            )
+            if answer is None:
+                return
+            if answer:
+                self._use_download(newest)
+                return
+        self._start_watching(folder)
+
+    def _start_watching(self, folder):
+        self._watcher = cheddar_up.DownloadWatcher(folder)
+        self.download_button.configure(text='Stop waiting')
+        self.status_var.set('Waiting for the Cheddar Up download…')
+        self._log(
+            '\nIn Cheddar Up, open the {} collection, then Manage > Reports > Collection Summary.\n'
+            'Leave the file in {}. It is picked up as soon as it finishes downloading.\n'.format(
+                self._collection_filter() or 'event', folder))
+        self.open_cheddar_up()
+        self._watch_job = self.after(1000, self._poll_download)
+
+    def _stop_watching(self, message=None):
+        if self._watch_job is not None:
+            try:
+                self.after_cancel(self._watch_job)
+            except Exception:
+                pass
+        self._watch_job = None
+        self._watcher = None
+        self.download_button.configure(text='Download latest from Cheddar Up')
+        if message:
+            self._log(message + '\n')
+            self.status_var.set(message)
+
+    def _poll_download(self):
+        self._watch_job = None
+        watcher = self._watcher
+        if watcher is None:
+            return
+        if self._busy:
+            self._watch_job = self.after(1000, self._poll_download)
+            return
+        path = watcher.check()
+        if path:
+            self._stop_watching()
+            self._use_download(path, offer_chart=True)
+            return
+        if watcher.expired():
+            self._stop_watching('No Cheddar Up download arrived. Click the button to try again, or Browse to pick the file.')
+            return
+        self._watch_job = self.after(1000, self._poll_download)
+
+    def _use_download(self, path, offer_chart=True):
+        exports_dir = os.path.join(APP_DIR, cheddar_up.EXPORTS_FOLDER)
+        try:
+            saved = cheddar_up.import_export(path, exports_dir)
+        except OSError as error:
+            self._log('Could not copy {} into {}: {}\nUsing it from Downloads.\n'.format(path, exports_dir, error))
+            saved = path
+        self._log('\nSaved the Cheddar Up export as:\n{}\n'.format(saved))
+        summary = cheddar_up.describe_export(saved)
+        for line in cheddar_up.summary_lines(summary):
+            self._log(line + '\n')
+        if not cheddar_up.matches_collection(saved, self._collection_filter()):
+            self._log('WARNING: That file name does not mention {}. Check it is the right collection.\n'.format(
+                self._collection_filter()))
+        self.export_var.set(saved)
+        self.export_entry.xview_moveto(1)
+        self.status_var.set(os.path.basename(saved))
+        self._remember_export(saved)
+        if offer_chart and not summary['problems'] and messagebox.askyesno(
+                'Cheddar Up export',
+                'Got {}.\n\nCreate the seating chart from it now?'.format(os.path.basename(saved)),
+                parent=self):
+            self.create_seating_chart()
 
     def _remember_export(self, path):
         try:
@@ -565,9 +692,11 @@ class App(ttk.Frame):
         self.update_idletasks()
 
     def _set_busy(self, busy):
+        self._busy = busy
         state = ['disabled'] if busy else ['!disabled']
         self.create_button.state(state)
         self.roster_button.state(state)
+        self.download_button.state(state)
         self._set_cursor(busy)
 
 
