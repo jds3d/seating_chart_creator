@@ -216,6 +216,8 @@ class GuestBook:
         self.raw_seatmates = []
         self.raw_pair_rows = []
         self.missing_attendees = []
+        # One entry per order (payer email + payment date), across both guest tabs.
+        self.orders = {}
         self.incomplete_names = []
         self.email_conflicts = []
         self.choice_conflicts = []
@@ -423,6 +425,29 @@ class GuestBook:
             'email': _as_text(email),
             'choices': [choice for choice in choices if choice],
         })
+
+    def note_order(self, payer, email, paid_on, tickets, names, unnamed_choices):
+        email_key = _as_text(email).casefold() or _key(payer)
+        order = self.orders.setdefault((email_key, _as_text(paid_on)), {
+            'payer': payer, 'email': _as_text(email), 'tickets': 0, 'names': [], 'choices': []})
+        order['tickets'] += tickets
+        for name in names:
+            if name not in order['names']:
+                order['names'].append(name)
+        for choice in unnamed_choices:
+            if choice not in order['choices']:
+                order['choices'].append(choice)
+
+    def short_orders(self):
+        """Orders that paid for more tickets than they name different people.
+
+        Orders that name nobody are not listed here: they are in missing_attendees.
+        """
+        found = []
+        for order in self.orders.values():
+            if order['names'] and order['tickets'] > len(order['names']):
+                found.append(dict(order, extra=order['tickets'] - len(order['names'])))
+        return found
 
     def link_seatmates(self, party, raw_values):
         for raw in raw_values:
@@ -682,6 +707,7 @@ def _read_item_sheet(worksheet, position, book):
     email_index = _find_header(headers, 'Payer Email')
     status_index = _find_header(headers, 'Payment Status')
     net_index = _find_header(headers, 'Net Quantity')
+    date_index = _find_header(headers, 'Payment Date')
     seatmate_indexes = [index for index, header in enumerate(headers) if _is_seatmate_header(header)]
 
     row_count = 0
@@ -697,7 +723,8 @@ def _read_item_sheet(worksheet, position, book):
         if _is_zero(_at(row, net_index)):
             heads['skipped_rows'] += 1
             continue
-        heads['tickets'] += _quantity(_at(row, net_index))
+        tickets = _quantity(_at(row, net_index))
+        heads['tickets'] += tickets
 
         email = _at(row, email_index)
         payer = _person_name('{} {}'.format(_as_text(_at(row, first_index)), _as_text(_at(row, last_index))))
@@ -711,6 +738,7 @@ def _read_item_sheet(worksheet, position, book):
             elif choice:
                 unnamed_choices.append(choice)
 
+        payer_only = not named
         if not named:
             if not payer:
                 continue
@@ -750,6 +778,8 @@ def _read_item_sheet(worksheet, position, book):
             if canonical and canonical not in party:
                 party.append(canonical)
         party = book.link_party(party)
+        book.note_order(payer, email, _at(row, date_index), tickets,
+                        [] if payer_only else party, unnamed_choices)
         seatmates = [_at(row, index) for index in seatmate_indexes]
         book.record_seatmate_cell(party, seatmates)
         row_count += 1
@@ -845,6 +875,11 @@ def readGuestList(export_path=None, requests_path=None):
             _read_item_sheet(sheets[position - 1], position, book)
     finally:
         workbook.close()
+    for order in book.short_orders():
+        book.warnings.append(
+            '{} paid for {} tickets but names only {}: {}. Add the other {} under Missing attendees.'.format(
+                order['payer'] or order['names'][0], order['tickets'], len(order['names']),
+                ', '.join(order['names']), order['extra']))
 
     print('Reading {}'.format(requests_path))
     book.requests_name = os.path.basename(requests_path)

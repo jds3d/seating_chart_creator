@@ -50,6 +50,17 @@ names and refunded or zero-quantity rows, and counts the payer when a purchase n
 After the chart is made, the log also shows how many were seated, and how many the review merged or removed.
 `python cheddar_up.py --open --wait 600` opens Cheddar Up and waits up to 10 minutes for a new one.
 
+# Corrections.xlsx
+The review window saves its answers here, and the seating program reads them each run. You can also edit it in Excel.
+- Missing attendees (Payer, Person, Choice): people to seat when an order's names are incomplete. This applies when
+  a payer left every attendee name blank, and also when an order (same payer email and payment date, across the
+  member and non-member tabs) paid for more tickets (Net Quantity, refunded or zero rows ignored) than it names
+  different people. Then each row adds one extra person to that order's party, for example
+  `Kenneth Albinder | Ricki Rodkin | Tuna`. The review window asks about these orders too.
+- Names (As written, Correct name): fills in a missing last name, and also renames a full attendee name
+  written in Cheddar Up, for example `Drbra Carosells` -> `Debra Carosella`. Names are compared ignoring case,
+  periods, commas and text in parentheses.
+
 # Tests
 `python -m unittest discover -s tests` checks the download step with fake files and runs the whole
 seating pipeline on a made-up export. The window test needs a display and is skipped without one.

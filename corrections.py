@@ -71,7 +71,10 @@ def save_corrections(path, state, previous):
         'Separate more than one guest with a semicolon.',
         'Put yes in a Skip column when the text is not a seating request.',
         'Missing attendees: one row per person who should be seated when a payer left the names blank.',
-        'Names: replace a short name with the full name.',
+        'Missing attendees, also: when an order paid for more tickets than it names people, one row per extra person '
+        '(Payer, Person, Choice). Those people join the people already named on that order.',
+        'Names: replace a short name with the full name, or correct a full name as written in Cheddar Up '
+        '(for example a misspelling). Matching ignores case, periods, commas and text in parentheses.',
         'Emails and Meal choices: the value to keep.',
         'Seatmates: who a written request should sit with.',
         'Request pairs: how a row from the requests workbook should be matched.',
@@ -107,12 +110,13 @@ def save_corrections(path, state, previous):
 
 
 def build_state(book, loaded):
+    missing = _build_missing(book, loaded)
     state = {
-        'missing': _build_missing(book, loaded),
+        'missing': missing,
         'names': _build_names(book, loaded),
         'emails': _build_emails(book, loaded),
         'choices': _build_simple_conflicts(book.choice_conflicts, loaded.get('choices', []), 'Choice'),
-        'unclaimed': _build_unclaimed(book, loaded),
+        'unclaimed': _build_unclaimed(book, loaded, skip=_short_payers(missing)),
         'duplicates': _build_duplicates(book, loaded),
         'seatmates': _build_seatmates(book, loaded),
         'pairs': _build_pairs(book, loaded),
@@ -122,8 +126,8 @@ def build_state(book, loaded):
 
 def section_defs(state):
     titles = [
-        ('missing', 'No attendee names'),
-        ('names', 'Names without a last name'),
+        ('missing', 'Missing attendees'),
+        ('names', 'Names to correct'),
         ('emails', 'Two emails'),
         ('choices', 'Two meal choices'),
         ('unclaimed', 'Choices with no name'),
@@ -165,7 +169,7 @@ def preview_names(book, state):
         for name in entered:
             names.add(name)
         payer_key = utils._key(payer)
-        if payer_key in book.placeholder_keys and payer_key not in book.real_name_keys:
+        if item.get('kind') != 'short' and payer_key in book.placeholder_keys and payer_key not in book.real_name_keys:
             if not any(utils._key(name) == payer_key for name in entered):
                 names = {name for name in names if utils._key(name) != payer_key}
     for pair, item in state['duplicates'].items():
@@ -248,7 +252,7 @@ def validate(book, state):
             continue
         for name in item['sit_with']:
             if utils._key(name) not in known:
-                errors.append('"{}" is not on the guest list. Add that person under No attendee names, or choose someone else.'.format(name))
+                errors.append('"{}" is not on the guest list. Add that person under Missing attendees, or choose someone else.'.format(name))
     for item in state['pairs'].values():
         if not item['decided']:
             errors.append('Match the request "{}" / "{}".'.format(item['left'], item['right']))
@@ -295,7 +299,7 @@ def _apply_missing(book, state):
     for payer, item in state['missing'].items():
         if not item.get('decided'):
             continue
-        email = ''
+        email = item.get('email', '')
         for issue in book.missing_attendees:
             if utils._key(issue['payer']) == utils._key(payer):
                 email = issue['email']
@@ -310,6 +314,12 @@ def _apply_missing(book, state):
                 book.set_choice(canonical, person['choice'])
             if canonical not in people:
                 people.append(canonical)
+        if item.get('kind') == 'short':
+            # The order already names some people. The new ones join that party.
+            named = [book.by_key[utils._key(name)] for name in item.get('named', []) if utils._key(name) in book.by_key]
+            if len(people) + len(named) > 1:
+                book.link_party(named + [person for person in people if person not in named])
+            continue
         if len(people) > 1:
             book.link_party(people)
         payer_key = utils._key(payer)
@@ -406,8 +416,58 @@ def _build_missing(book, loaded):
             'choices': list(issue['choices']),
             'people': people,
             'decided': decided,
+            'kind': 'blank',
+            'named': [],
+            'extra': 0,
+        }
+    for order in _short_order_issues(book):
+        payer = utils._person_name(order['payer'])
+        if utils._key(payer) in {utils._key(name) for name in items}:
+            continue
+        rows = saved.get(utils._key(payer))
+        if rows:
+            people = [{'name': utils._person_name(row['Person']), 'choice': row['Choice']} for row in rows]
+            decided = True
+        else:
+            choices = order['choices']
+            people = [{'name': '', 'choice': choices[index] if index < len(choices) else ''}
+                      for index in range(max(order['extra'], len(choices)))]
+            decided = False
+        items[payer] = {
+            'payer': payer,
+            'email': order['email'],
+            'choices': list(order['choices']),
+            'people': people,
+            'decided': decided,
+            'kind': 'short',
+            'named': list(order['names']),
+            'extra': order['extra'],
+            'tickets': order['tickets'],
         }
     return items
+
+
+def _short_order_issues(book):
+    """One entry per payer whose orders paid for more tickets than they name people."""
+    found = {}
+    for order in book.short_orders():
+        payer = utils._person_name(order['payer'])
+        if not payer:
+            continue
+        key = utils._key(payer)
+        if key not in found:
+            found[key] = dict(order, payer=payer, names=list(order['names']), choices=list(order['choices']))
+            continue
+        merged = found[key]
+        merged['tickets'] += order['tickets']
+        merged['extra'] += order['extra']
+        merged['names'] += [name for name in order['names'] if name not in merged['names']]
+        merged['choices'] += [choice for choice in order['choices'] if choice not in merged['choices']]
+    return list(found.values())
+
+
+def _short_payers(missing):
+    return {utils._key(payer) for payer, item in missing.items() if item.get('kind') == 'short'}
 
 
 def _build_names(book, loaded):
@@ -433,6 +493,17 @@ def _build_names(book, loaded):
             'payer': utils._person_name(issue['payer']),
             'name': name,
             'decided': decided,
+        }
+    # A full name written in Cheddar Up can also be corrected here.
+    for key, correct in saved.items():
+        if key in items or not correct or key not in book.by_key:
+            continue
+        written = book.by_key[key]
+        items[key] = {
+            'written': written,
+            'payer': '',
+            'name': utils._person_name(correct),
+            'decided': True,
         }
     return items
 
@@ -475,7 +546,7 @@ def _build_simple_conflicts(conflicts, rows, value_header):
     return items
 
 
-def _build_unclaimed(book, loaded):
+def _build_unclaimed(book, loaded, skip=()):
     saved = {}
     for row in loaded.get('unclaimed', []):
         saved.setdefault(utils._key(row['Payer']), []).append(row)
@@ -483,6 +554,9 @@ def _build_unclaimed(book, loaded):
     for issue in book.unclaimed_choices:
         payer = issue['payer']
         key = utils._key(payer)
+        if key in skip:
+            # The Missing attendees question for this order already asks for these meals.
+            continue
         if key in items:
             for choice in issue['choices']:
                 if choice not in [row['choice'] for row in items[key]['rows']]:

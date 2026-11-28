@@ -331,7 +331,8 @@ class ReviewDialog(tk.Toplevel):
 
     def _build_missing(self, item):
         card = self._card(not item['decided'])
-        ttk.Label(card, text='Who is attending?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
+        ttk.Label(card, text='Who else is attending?' if item.get('kind') == 'short' else 'Who is attending?',
+                  font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
         choices = [choice for choice in item['choices'] if choice]
         if len(choices) == 1:
             meal_sentence = 'A meal was ordered without a name: {}.'.format(choices[0])
@@ -339,12 +340,21 @@ class ReviewDialog(tk.Toplevel):
             meal_sentence = 'Meals were ordered without a name: {}.'.format(', '.join(choices))
         else:
             meal_sentence = 'No meal was listed either.'
-        self._explain(
-            card,
-            'Cheddar Up has no attendee names on this payment. {} '
-            'The name already in the box is only a guess: it is the person who paid, not a name from the form. '
-            'Change it if someone else is coming. Add a row for each other person, and choose that person\'s meal.'.format(meal_sentence),
-        )
+        if item.get('kind') == 'short':
+            self._explain(
+                card,
+                'This order paid for {} tickets but names only {}: {}. {} '
+                'Enter the {} other {} below, and choose each meal. They are seated with the people already named.'.format(
+                    item['tickets'], len(item['named']), ', '.join(item['named']), meal_sentence,
+                    item['extra'], 'person' if item['extra'] == 1 else 'people'),
+            )
+        else:
+            self._explain(
+                card,
+                'Cheddar Up has no attendee names on this payment. {} '
+                'The name already in the box is only a guess: it is the person who paid, not a name from the form. '
+                'Change it if someone else is coming. Add a row for each other person, and choose that person\'s meal.'.format(meal_sentence),
+            )
         ttk.Label(card, text='Payer: {}'.format(item['payer'])).pack(anchor='w')
         if item['email']:
             ttk.Label(card, text='Email on the payment: {}'.format(item['email'])).pack(anchor='w')
@@ -353,7 +363,7 @@ class ReviewDialog(tk.Toplevel):
         rows.pack(fill=tk.X, pady=(10, 0))
         headers = ttk.Frame(rows)
         headers.pack(fill=tk.X)
-        ttk.Label(headers, text='Who is coming', width=32).pack(side=tk.LEFT)
+        ttk.Label(headers, text='Who is coming' if item.get('kind') != 'short' else 'Who else is coming', width=32).pack(side=tk.LEFT)
         ttk.Label(headers, text='Meal').pack(side=tk.LEFT, padx=8)
         editors = []
 
@@ -397,11 +407,13 @@ class ReviewDialog(tk.Toplevel):
     def _build_names(self, item):
         card = self._card(not item['decided'])
         ttk.Label(card, text='What is the full name?', font=('Segoe UI', 14, 'bold')).pack(anchor='w', pady=(6, 0))
-        self._explain(
-            card,
-            '"{}" was entered on {}\'s purchase without a last name. Enter the first and last name to use.'.format(
-                item['written'], item['payer']),
-        )
+        if item['payer']:
+            note = '"{}" was entered on {}\'s purchase without a last name. Enter the first and last name to use.'.format(
+                item['written'], item['payer'])
+        else:
+            note = '"{}" is written this way in Cheddar Up. Your corrections file renames it. Enter the first and last name to use.'.format(
+                item['written'])
+        self._explain(card, note)
         name = tk.StringVar(value=item.get('name', ''))
         ttk.Entry(card, textvariable=name, width=36).pack(anchor='w')
 
@@ -482,7 +494,7 @@ class ReviewDialog(tk.Toplevel):
             if text and not self._known_name(text):
                 messagebox.showerror(
                     'Meal',
-                    '"{}" is not on the guest list. Add that person under No attendee names, or leave the meal unassigned.'.format(text),
+                    '"{}" is not on the guest list. Add that person under Missing attendees, or leave the meal unassigned.'.format(text),
                     parent=self,
                 )
                 return
@@ -559,7 +571,7 @@ class ReviewDialog(tk.Toplevel):
         self._explain(
             card,
             'Choose a guest for each person named here, or mark that person not attending. '
-            'If the name is not in the list, add that person under No attendee names first.',
+            'If the name is not in the list, add that person under Missing attendees first.',
         )
         skip = tk.BooleanVar(value=item.get('skip', False))
         ttk.Checkbutton(card, text='This is not a seating request', variable=skip).pack(anchor='w', pady=(4, 0))
@@ -668,7 +680,7 @@ class ReviewDialog(tk.Toplevel):
                 if decide:
                     messagebox.showerror(
                         'Seatmate request',
-                        '"{}" is not on the guest list. Add that person under No attendee names, or mark them not attending.'.format(part['guest']),
+                        '"{}" is not on the guest list. Add that person under Missing attendees, or mark them not attending.'.format(part['guest']),
                         parent=self,
                     )
                 item['decided'] = False

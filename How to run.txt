@@ -13,6 +13,7 @@ Finished seating charts and table rosters are saved in the output folder.
 
 When a name or seatmate request needs a decision, the window asks you to fix it.
 Those answers are saved in Corrections.xlsx, in this same folder. You can edit that file in Excel.
+An order that paid for more tickets than it has names is also asked about, and Corrections.xlsx can rename a misspelled full name.
 Updating the program does not replace Corrections.xlsx, Requests.xlsx, or the saved Cheddar Up file.
 
 To get a newer program, close Seating Chart Creator, then update this folder with git pull.
